@@ -281,7 +281,8 @@ wae_filtered %>%
   group_by(lake_id, exposure) %>% 
   summarise(n_ages =  n_distinct(est_age),
             min = min(est_age),
-            max = max(est_age)) %>% 
+            max = max(est_age),
+            n = n()) %>% 
   print(n = nrow(.))
 
 wae_filtered %>% 
@@ -328,7 +329,8 @@ wae_plot %>%
 
 #fit model
 fit_wae <- brm(
-  length_1 ~ est_age * exposure + sc_lifetime_gdd + (1 | lake_id),
+  length_1 ~ est_age * exposure #+ sc_lifetime_gdd 
+    + (1 | lake_id),
   data = wae_filtered,
   family = gaussian(),
   chains = 4,
@@ -582,6 +584,38 @@ saveRDS(fit_blg, file.path("D:",
 rm(blg_plot, blg, blg_filtered)
 ```
 
+# saved model fits
+```{r}
+fit_wae_gdd <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_wae_gdd.rds"))
+fit_wae <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_wae.rds"))
+fit_nop <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_nop.rds"))
+fit_blg <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_blg.rds"))
+```
+
 
 # output
 ```{r}
@@ -592,13 +626,13 @@ plot(conditional_effects(fit_wae))
 
 # variation by lake?
 ```{r}
-fit_nop %>% 
+fit_wae %>% 
   spread_draws(r_lake_id[lake_id,Intercept], b_Intercept) %>% 
   mutate(lake_intercept = b_Intercept + r_lake_id) %>% 
   ungroup() %>% 
   ggplot(aes(x = lake_intercept, y = reorder(lake_id, lake_intercept))) +
-  geom_vline(xintercept = fixef(fit_nop)[1, 1], color = "#839496", size = 1) +
-  geom_vline(xintercept = fixef(fit_nop)[1, 3:4], color = "#839496", linetype = 2) +
+  geom_vline(xintercept = fixef(fit_wae)[1, 1], color = "#839496", size = 1) +
+  geom_vline(xintercept = fixef(fit_wae)[1, 3:4], color = "#839496", linetype = 2) +
   geom_halfeyeh(.width = .5, size = 2/3, fill = "lightblue") +
   labs(x = "Length (inches)",
        y = NULL) +
