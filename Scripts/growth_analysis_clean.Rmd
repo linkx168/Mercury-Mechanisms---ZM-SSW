@@ -255,6 +255,14 @@ saveRDS(fit_wae, file.path("D:",
                           "MAISRC Mercury Pathways 53.2",
                           "Growth Analysis",
                           "length_mean_ages_wae.rds"))
+
+fit_wae <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_wae.rds"))
 ```
 
 # output
