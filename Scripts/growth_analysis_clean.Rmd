@@ -9,7 +9,7 @@ editor_options:
 Update on 4/16/2026:
 This filtering was created on the estimated age, where we do not include fish that were born before invasion but captured after (mixed). However, we should maybe consider if an ALK was constructed with "mixed" groups. In that, we filtered out estimated ages, but they could be bias if an ALK was constructed of fish who lived through invasion. This likely shouldn't be a problem because we should be accurate ALKs that our estimated ages should be representative of the real ages. We also have a filter step such that lakes include years 1-5 with out any missing years.
 
-Future improvements would also be looking at 
+I did not exclude ssw lakes, so lakes here could be zm only or both zm and ssw. 
 
 
 # library
@@ -25,6 +25,8 @@ library(rnaturalearth)
 library(rnaturalearthdata)
 library(leaflet)
 library(brms)
+library(tidybayes)
+library(mwlaxeref)
 #speeds up model fitting
 library(cmdstanr)
 options(brms.backend = "cmdstanr")
@@ -33,7 +35,7 @@ options(brms.backend = "cmdstanr")
 # data
 ```{r}
 #reading in the updated Minnesota data
-mn_data <- open_dataset(sources = file.path("D:",
+mn_data <- open_dataset(sources = file.path("G:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -42,7 +44,7 @@ mn_data <- open_dataset(sources = file.path("D:",
                                             "mn_update")) %>% 
   filter(state == "Minnesota" & !is.na(est_age))
 
-zm_ssw <- read_csv(file.path("D:",
+zm_ssw <- read_csv(file.path("G:",
                              "Shared drives",
                              "Hansen Lab",
                              "RESEARCH PROJECTS",
@@ -75,7 +77,7 @@ zm_ssw <- read_csv(file.path("D:",
          ssw = `starry stonewort`)
 
 #crosswalk - get lat and lon from fish data
-xwalk <- open_dataset(sources = file.path("D:",
+xwalk <- open_dataset(sources = file.path("G:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -87,6 +89,31 @@ xwalk <- open_dataset(sources = file.path("D:",
   filter(!is.na(latitude_lake_centroid) & !is.na(lake_id)) %>% 
   distinct(lake_id, latitude_lake_centroid, longitude_lake_centroid) %>% 
   collect()
+
+gdd <- read_feather(file.path("G:",
+                              "Shared drives",
+                              "Hansen Lab",
+                              "RESEARCH PROJECTS",
+                              "MAISRC Mercury Pathways 53.2",
+                              "Data",
+                              "lake_temperature_metrics_GLM_NLDAS.feather")) %>% 
+  select(site_id,
+         year,
+         gdd_wtr_5c) %>% 
+  #get DOW from NHDHR
+  mutate(site_id = str_remove(site_id, "nhdhr_")) %>% 
+  nhdhr_to_local(from_colname = "site_id",states = "mn") %>% 
+  #need to drop leading 0 to match fish data - then convert back to char
+  mutate(lake_id = as.numeric(local.id),
+         lake_id = as.character(lake_id)) %>% 
+  distinct(lake_id, year, gdd_wtr_5c)
+glimpse(gdd)
+
+gdd <- gdd %>% 
+  group_by(lake_id) %>% 
+  mutate(lake_avg_gdd = mean(gdd_wtr_5c),
+         gdd_anom = gdd_wtr_5c - lake_avg_gdd) %>% 
+  ungroup()
 ```
 
 # filter for analysis 
@@ -132,14 +159,49 @@ age_data <- mn_data %>%
   #remove mix fish
   filter(exposure != "drop")
 
+#add in gdd 
+age_data <- age_data %>% 
+  mutate(fish_id = row_number())
+
+fish_years <- age_data %>% 
+  mutate(alive_year = map2(birth_year, year, seq)) %>% 
+  unnest(alive_year)
+
+fish_years <- fish_years %>% 
+  left_join(gdd,
+            by = c("lake_id",
+                   "alive_year" = "year"))
+
+thermal_history <- fish_years %>% 
+  group_by(fish_id) %>% 
+  summarise(lifetime_gdd_anom = sum(gdd_anom))
+
+age_data <- age_data %>% 
+  left_join(thermal_history,
+            by = "fish_id")
+rm(fish_years, thermal_history, gdd)
+
+#filtering for valid groups
 valid_groups <- age_data %>% 
   group_by(lake_id, species_1) %>% 
   summarise(
     has_before = any(exposure == "before"),
-    has_after = any(exposure == "after"),
+    has_after  = any(exposure == "after"),
+    
+    has_gdd_before = any(exposure == "before" &
+                           !is.na(lifetime_gdd_anom)),
+    
+    has_gdd_after  = any(exposure == "after" &
+                           !is.na(lifetime_gdd_anom)),
+    
     .groups = "drop"
   ) %>% 
-  filter(has_before & has_after)
+  filter(
+    has_before,
+    has_after,
+    has_gdd_before,
+    has_gdd_after
+  )
 
 #gather fish that have before and after data
 age_data_filtered <- age_data %>% 
@@ -173,10 +235,13 @@ rm(check, age_check, age_data, valid_groups)
 species_list <- split(age_data_filtered, age_data_filtered$species_1)
 ```
 
-# model
+# model wae
 ```{r}
 #lets walleye first
 wae <- species_list[["walleye"]]
+
+wae <- wae %>% 
+  filter(!is.na(lifetime_gdd_anom))
 
 #make sure we only used common ages across lakes
 #first we look at ages that are the same in both exposures in each lake
@@ -223,19 +288,63 @@ wae_filtered %>%
   group_by(lake_id, exposure) %>% 
   summarise(n_ages =  n_distinct(est_age),
             min = min(est_age),
-            max = max(est_age)) %>% 
+            max = max(est_age),
+            n = n()) %>% 
   print(n = nrow(.))
+
+wae_filtered %>% 
+  group_by(lake_id) %>% 
+  summarise(n = n_distinct(exposure))
+
+wae_filtered %>% 
+  filter(!is.na(lifetime_gdd_anom)) %>% 
+  group_by(lake_id) %>% 
+  summarise(n_invasion = n_distinct(exposure))
+
 rm(ages_global,
    ages_within_lake,
    required_ages,
    valid_lakes)
 
+#Pepin does not relate to this analysis
 wae_filtered <- wae_filtered %>% 
-  mutate(est_age = as.factor(est_age))
+  filter(lake_id != "25000100")
+
+gdd_anom_mean <- mean(wae_filtered$lifetime_gdd_anom)
+gdd_anom_sd <- sd(wae_filtered$lifetime_gdd_anom)
+
+wae_filtered <- wae_filtered %>% 
+  mutate(est_age = as.factor(est_age),
+         sc_lifetime_gdd_anom = (lifetime_gdd_anom - gdd_anom_mean)/gdd_anom_sd)
+
+wae_plot <- wae_filtered %>% 
+  group_by(lake_id, est_age, exposure) %>% 
+  summarise(n = n(), .groups = "drop") %>% 
+  group_by(lake_id) %>% 
+  mutate(total_n = sum(n)) %>% 
+  ungroup()
+
+wae_plot %>% 
+  ggplot(aes(
+    x = factor(est_age), 
+    y = n, 
+    fill = fct_reorder(lake_id, total_n)
+  )) +
+  geom_col(position = "fill") +
+  labs(x = "Estimated Age", y = "Proportion", fill = "Lake") +
+  facet_wrap(~exposure)
+
+wae_filtered %>%
+  mutate(est_age = as.integer(est_age)) %>% 
+  ggplot() +
+  geom_point(aes(sc_lifetime_gdd_anom, length_1, color = lake_id)) +
+  geom_smooth(aes(sc_lifetime_gdd_anom, length_1, color = lake_id), method = "lm") +
+  facet_wrap(~est_age)
 
 #fit model
 fit_wae <- brm(
-  length_1 ~ est_age * exposure + (1 | lake_id),
+  length_1 ~ est_age * exposure + sc_lifetime_gdd_anom 
+    + (1 + exposure | lake_id),
   data = wae_filtered,
   family = gaussian(),
   chains = 4,
@@ -248,13 +357,14 @@ fit_wae <- brm(
     adapt_delta = 0.95,
     max_treedepth = 12))
 
-saveRDS(fit_wae, file.path("D:",
+saveRDS(fit_wae, file.path("G:",
                           "Shared drives",
                           "Hansen Lab",
                           "RESEARCH PROJECTS",
                           "MAISRC Mercury Pathways 53.2",
                           "Growth Analysis",
                           "length_mean_ages_wae.rds"))
+<<<<<<< HEAD
 
 fit_wae <- readRDS(file.path("D:",
                           "Shared drives",
@@ -263,11 +373,350 @@ fit_wae <- readRDS(file.path("D:",
                           "MAISRC Mercury Pathways 53.2",
                           "Growth Analysis",
                           "length_mean_ages_wae.rds"))
+=======
+rm(wae_plot, wae, wae_filtered)
+>>>>>>> f9e7b8707d20731d410ff8e9e74749f8604a0e64
 ```
+
+# model nop
+```{r}
+nop <- species_list[["northern_pike"]]
+
+nop <- nop %>% 
+  filter(!is.na(lifetime_gdd_anom))
+
+#make sure we only used common ages across lakes
+#first we look at ages that are the same in both exposures in each lake
+ages_within_lake <- nop %>%
+  group_by(lake_id, est_age) %>%
+  summarise(
+    has_before = any(exposure == "before"),
+    has_after  = any(exposure == "after"),
+    .groups = "drop"
+  ) %>%
+  filter(has_before & has_after)
+
+#now look at ages across all lakes
+ages_global <- ages_within_lake %>%
+  group_by(est_age) %>%
+  summarise(
+    n_lakes = n_distinct(lake_id),
+    .groups = "drop"
+  )
+#looks reasonable to keep ages 1:5 (throws out a few lakes but maximizes est_ages and # of lakes)
+
+required_ages <- 1:5
+
+valid_lakes <- nop %>%
+  filter(est_age %in% required_ages) %>%
+  group_by(lake_id, exposure) %>%
+  summarise(
+    n_ages = n_distinct(est_age),
+    min_age = min(est_age),
+    max_age = max(est_age),
+    .groups = "drop"
+  ) %>% 
+  filter(n_ages == 5, min_age == 1, max_age == 5) %>% 
+  group_by(lake_id) %>%
+  filter(n_distinct(exposure) == 2) %>% 
+  distinct(lake_id) %>% 
+  pull(lake_id) 
+
+nop_filtered <- nop %>%
+  filter(lake_id %in% valid_lakes,
+         est_age %in% required_ages)
+
+nop_filtered %>% 
+  group_by(lake_id, exposure) %>% 
+  summarise(n_ages =  n_distinct(est_age),
+            min = min(est_age),
+            max = max(est_age)) %>% 
+  print(n = nrow(.))
+
+nop_filtered %>% 
+  group_by(lake_id) %>% 
+  summarise(n_invasion = n_distinct(exposure))
+
+rm(ages_global,
+   ages_within_lake,
+   required_ages,
+   valid_lakes)
+
+gdd_mean_anom <- mean(nop_filtered$lifetime_gdd_anom)
+gdd_sd_anom <- sd(nop_filtered$lifetime_gdd_anom)
+
+nop_filtered <- nop_filtered %>% 
+  mutate(est_age = as.factor(est_age),
+         sc_lifetime_gdd_anom = (lifetime_gdd_anom - gdd_mean_anom)/gdd_sd_anom)
+
+nop_plot <- nop_filtered %>% 
+  group_by(lake_id, est_age, exposure) %>% 
+  summarise(n = n(), .groups = "drop") %>% 
+  group_by(lake_id) %>% 
+  mutate(total_n = sum(n)) %>% 
+  ungroup()
+
+nop_plot %>% 
+  ggplot(aes(
+    x = factor(est_age), 
+    y = n, 
+    fill = fct_reorder(lake_id, total_n)
+  )) +
+  geom_col(position = "fill") +
+  labs(x = "Estimated Age", y = "Proportion", fill = "Lake") +
+  facet_wrap(~exposure)
+
+
+#fit model
+fit_nop <- brm(
+  length_1 ~ est_age * exposure + sc_lifetime_gdd_anom + (1 | lake_id),
+  data = nop_filtered,
+  family = gaussian(),
+  chains = 4,
+  iter = 4000,
+  warmup = 1000,
+  cores = 4,
+  backend = "cmdstanr",
+  threads = threading(4), 
+  control = list(
+    adapt_delta = 0.95,
+    max_treedepth = 12))
+
+saveRDS(fit_nop, file.path("G:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_nop.rds"))
+
+rm(nop, nop_filtered, nop_plot)
+```
+
+# model blg
+```{r}
+blg <- species_list[["bluegill"]]
+
+blg <- blg %>% 
+  filter(!is.na(lifetime_gdd_anom))
+
+#make sure we only used common ages across lakes
+#first we look at ages that are the same in both exposures in each lake
+ages_within_lake <- blg %>%
+  group_by(lake_id, est_age) %>%
+  summarise(
+    has_before = any(exposure == "before"),
+    has_after  = any(exposure == "after"),
+    .groups = "drop"
+  ) %>%
+  filter(has_before & has_after)
+
+#now look at ages across all lakes
+ages_global <- ages_within_lake %>%
+  group_by(est_age) %>%
+  summarise(
+    n_lakes = n_distinct(lake_id),
+    .groups = "drop"
+  )
+#looks reasonable to keep ages 1:5 (throws out a few lakes but maximizes est_ages and # of lakes)
+
+required_ages <- 2:6
+
+valid_lakes <- blg %>%
+  filter(est_age %in% required_ages) %>%
+  group_by(lake_id, exposure) %>%
+  summarise(
+    n_ages = n_distinct(est_age),
+    min_age = min(est_age),
+    max_age = max(est_age),
+    .groups = "drop"
+  ) %>% 
+  filter(n_ages == 5, min_age == 2, max_age == 6) %>% 
+  group_by(lake_id) %>%
+  filter(n_distinct(exposure) == 2) %>% 
+  distinct(lake_id) %>% 
+  pull(lake_id) 
+
+blg_filtered <- blg %>%
+  filter(lake_id %in% valid_lakes,
+         est_age %in% required_ages) 
+
+blg_filtered %>% 
+  group_by(lake_id, exposure) %>% 
+  summarise(n_ages =  n_distinct(est_age),
+            min = min(est_age),
+            max = max(est_age)) %>% 
+  print(n = nrow(.))
+
+rm(ages_global,
+   ages_within_lake,
+   required_ages,
+   valid_lakes)
+
+gdd_mean_anom <- mean(blg_filtered$lifetime_gdd_anom)
+gdd_sd_anom <- sd(blg_filtered$lifetime_gdd_anom)
+
+blg_filtered <- blg_filtered %>% 
+  mutate(est_age = as.factor(est_age),
+         sc_lifetime_gdd_anom = (lifetime_gdd_anom - gdd_mean_anom)/gdd_sd_anom) 
+
+blg_plot <- blg_filtered %>% 
+  group_by(lake_id, est_age,exposure) %>% 
+  summarise(n = n(), .groups = "drop") %>% 
+  group_by(lake_id) %>% 
+  mutate(total_n = sum(n)) %>% 
+  ungroup()
+
+blg_plot %>% 
+  ggplot(aes(
+    x = factor(est_age), 
+    y = n, 
+    fill = fct_reorder(lake_id, total_n)
+  )) +
+  geom_col(position = "fill") +
+  labs(x = "Estimated Age", y = "Proportion", fill = "Lake") +
+  facet_wrap(~exposure)
+
+blg_filtered %>%
+  mutate(est_age = as.integer(est_age)) %>% 
+  ggplot() +
+  geom_point(aes(sc_lifetime_gdd_anom, length_1, color = lake_id)) +
+  geom_smooth(aes(sc_lifetime_gdd_anom, length_1, color = lake_id), method = "lm") +
+  facet_wrap(~est_age)
+  
+#fit model
+fit_blg <- brm(
+  length_1 ~ est_age * exposure + sc_lifetime_gdd_anom + (1 | lake_id),
+  data = blg_filtered,
+  family = gaussian(),
+  chains = 4,
+  iter = 4000,
+  warmup = 1000,
+  cores = 4,
+  backend = "cmdstanr",
+  threads = threading(4), 
+  control = list(
+    adapt_delta = 0.95,
+    max_treedepth = 12))
+
+saveRDS(fit_blg, file.path("G:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_blg.rds"))
+rm(blg_plot, blg, blg_filtered)
+```
+
+# saved model fits
+```{r}
+fit_wae_gdd <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_wae_gdd.rds"))
+fit_wae <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_wae.rds"))
+fit_nop <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_nop.rds"))
+fit_blg <- readRDS(file.path("D:",
+                          "Shared drives",
+                          "Hansen Lab",
+                          "RESEARCH PROJECTS",
+                          "MAISRC Mercury Pathways 53.2",
+                          "Growth Analysis",
+                          "length_mean_ages_blg.rds"))
+```
+
 
 # output
 ```{r}
 plot(fit_wae)
 summary(fit_wae)
+plot(conditional_effects(fit_wae))
+```
+
+# lake level exposure effect
+```{r}
+lake_effects <- ranef(fit_wae)$lake_id
+
+lake_exposure_effects <- tibble(
+  
+  lake_id = rownames(lake_effects[, , 1]),
+  
+  exposure_effect =
+    lake_effects[, "Estimate", "exposurebefore"],
+  
+  lower =
+    lake_effects[, "Q2.5", "exposurebefore"],
+  
+  upper =
+    lake_effects[, "Q97.5", "exposurebefore"]
+)
+
+global_effect <- fixef(fit_wae)["exposurebefore", "Estimate"]
+
+lake_exposure_effects <- lake_exposure_effects %>%
+  mutate(
+    total_effect = exposure_effect + global_effect,
+    total_lower  = lower + global_effect,
+    total_upper  = upper + global_effect
+  )
+
+ggplot(lake_exposure_effects,
+       aes(x = reorder(lake_id, total_effect),
+           y = total_effect)) +
+  
+  geom_point() +
+  
+  geom_errorbar(
+    aes(ymin = total_lower,
+        ymax = total_upper),
+    width = 0
+  ) +
+  
+  geom_hline(yintercept = 0,
+             linetype = 2) +
+  
+  coord_flip() +
+  
+  labs(
+    x = "Lake ID",
+    y = "Before - After effect on length (mm)",
+    title = "Lake-specific exposure effects"
+  )
+```
+
+
+# lake level intercept vis
+```{r}
+fit_wae %>% 
+  spread_draws(r_lake_id[lake_id,Intercept], b_Intercept) %>% 
+  mutate(lake_intercept = b_Intercept + r_lake_id) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = lake_intercept, y = reorder(lake_id, lake_intercept))) +
+  geom_vline(xintercept = fixef(fit_wae)[1, 1], color = "#839496", size = 1) +
+  geom_vline(xintercept = fixef(fit_wae)[1, 3:4], color = "#839496", linetype = 2) +
+  geom_halfeyeh(.width = .5, size = 2/3, fill = "lightblue") +
+  labs(x = "Length (inches)",
+       y = NULL) +
+  theme(panel.grid   = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y  = element_text(hjust = 0),
+        text = element_text(family = "Ubuntu"))
+#value is a hypothetical age-1 (age-2 for blg) fish "before" invasion - we really just want to viz the intercept spread by lake tho
 ```
 
