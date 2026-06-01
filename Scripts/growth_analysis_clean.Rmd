@@ -35,7 +35,7 @@ options(brms.backend = "cmdstanr")
 # data
 ```{r}
 #reading in the updated Minnesota data
-mn_data <- open_dataset(sources = file.path("G:",
+mn_data <- open_dataset(sources = file.path("D:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -44,7 +44,7 @@ mn_data <- open_dataset(sources = file.path("G:",
                                             "mn_update")) %>% 
   filter(state == "Minnesota" & !is.na(est_age))
 
-zm_ssw <- read_csv(file.path("G:",
+zm_ssw <- read_csv(file.path("D:",
                              "Shared drives",
                              "Hansen Lab",
                              "RESEARCH PROJECTS",
@@ -77,7 +77,7 @@ zm_ssw <- read_csv(file.path("G:",
          ssw = `starry stonewort`)
 
 #crosswalk - get lat and lon from fish data
-xwalk <- open_dataset(sources = file.path("G:",
+xwalk <- open_dataset(sources = file.path("D:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -90,7 +90,7 @@ xwalk <- open_dataset(sources = file.path("G:",
   distinct(lake_id, latitude_lake_centroid, longitude_lake_centroid) %>% 
   collect()
 
-gdd <- read_feather(file.path("G:",
+gdd <- read_feather(file.path("D:",
                               "Shared drives",
                               "Hansen Lab",
                               "RESEARCH PROJECTS",
@@ -364,18 +364,6 @@ saveRDS(fit_wae, file.path("G:",
                           "MAISRC Mercury Pathways 53.2",
                           "Growth Analysis",
                           "length_mean_ages_wae.rds"))
-<<<<<<< HEAD
-
-fit_wae <- readRDS(file.path("D:",
-                          "Shared drives",
-                          "Hansen Lab",
-                          "RESEARCH PROJECTS",
-                          "MAISRC Mercury Pathways 53.2",
-                          "Growth Analysis",
-                          "length_mean_ages_wae.rds"))
-=======
-rm(wae_plot, wae, wae_filtered)
->>>>>>> f9e7b8707d20731d410ff8e9e74749f8604a0e64
 ```
 
 # model nop
@@ -582,6 +570,7 @@ blg_filtered %>%
   ggplot() +
   geom_point(aes(sc_lifetime_gdd_anom, length_1, color = lake_id)) +
   geom_smooth(aes(sc_lifetime_gdd_anom, length_1, color = lake_id), method = "lm") +
+  geom_smooth(aes(sc_lifetime_gdd_anom, length_1), method = "lm", color = "black") +
   facet_wrap(~est_age)
   
 #fit model
