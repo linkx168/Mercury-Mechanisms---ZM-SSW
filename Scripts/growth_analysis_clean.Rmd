@@ -371,10 +371,7 @@ saveRDS(fit_wae, file.path("G:",
                           "MAISRC Mercury Pathways 53.2",
                           "Growth Analysis",
                           "length_mean_ages_wae.rds"))
-<<<<<<< HEAD
-=======
 rm(wae_plot, wae, wae_filtered)
->>>>>>> 4b61cc3cda233bc915430487d02089f7ec0abd35
 ```
 
 # model nop
