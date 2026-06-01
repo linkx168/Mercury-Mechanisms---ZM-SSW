@@ -341,6 +341,13 @@ wae_filtered %>%
   geom_smooth(aes(sc_lifetime_gdd_anom, length_1, color = lake_id), method = "lm") +
   facet_wrap(~est_age)
 
+wae_filtered %>% 
+  filter(!is.na(age)) %>% 
+  group_by(lake_id, exposure, aging_structure_1) %>% 
+  count() %>% 
+  arrange(lake_id) %>% 
+  print(n = nrow(.))
+
 #fit model
 fit_wae <- brm(
   length_1 ~ est_age * exposure + sc_lifetime_gdd_anom 
@@ -364,6 +371,10 @@ saveRDS(fit_wae, file.path("G:",
                           "MAISRC Mercury Pathways 53.2",
                           "Growth Analysis",
                           "length_mean_ages_wae.rds"))
+<<<<<<< HEAD
+=======
+rm(wae_plot, wae, wae_filtered)
+>>>>>>> 4b61cc3cda233bc915430487d02089f7ec0abd35
 ```
 
 # model nop
@@ -506,7 +517,6 @@ ages_global <- ages_within_lake %>%
     n_lakes = n_distinct(lake_id),
     .groups = "drop"
   )
-#looks reasonable to keep ages 1:5 (throws out a few lakes but maximizes est_ages and # of lakes)
 
 required_ages <- 2:6
 
@@ -566,13 +576,29 @@ blg_plot %>%
   facet_wrap(~exposure)
 
 blg_filtered %>%
-  mutate(est_age = as.integer(est_age)) %>% 
+  mutate(est_age = as.factor(est_age)) %>% 
   ggplot() +
   geom_point(aes(sc_lifetime_gdd_anom, length_1, color = lake_id)) +
   geom_smooth(aes(sc_lifetime_gdd_anom, length_1, color = lake_id), method = "lm") +
   geom_smooth(aes(sc_lifetime_gdd_anom, length_1), method = "lm", color = "black") +
   facet_wrap(~est_age)
-  
+
+blg_filtered %>%
+  mutate(hatch_year = year - as.numeric(est_age)) %>%
+  ggplot(aes(hatch_year,
+             sc_lifetime_gdd_anom,
+             color = factor(est_age))) +
+  geom_point() +
+  geom_smooth(se = FALSE)
+
+blg_filtered %>% 
+  filter(!is.na(age)) %>% 
+  group_by(lake_id, exposure, aging_structure_1) %>% 
+  count() %>% 
+  arrange(lake_id) %>% 
+  print(n = nrow(.))
+
+
 #fit model
 fit_blg <- brm(
   length_1 ~ est_age * exposure + sc_lifetime_gdd_anom + (1 | lake_id),
@@ -600,28 +626,21 @@ rm(blg_plot, blg, blg_filtered)
 
 # saved model fits
 ```{r}
-fit_wae_gdd <- readRDS(file.path("D:",
-                          "Shared drives",
-                          "Hansen Lab",
-                          "RESEARCH PROJECTS",
-                          "MAISRC Mercury Pathways 53.2",
-                          "Growth Analysis",
-                          "length_mean_ages_wae_gdd.rds"))
-fit_wae <- readRDS(file.path("D:",
+fit_wae <- readRDS(file.path("G:",
                           "Shared drives",
                           "Hansen Lab",
                           "RESEARCH PROJECTS",
                           "MAISRC Mercury Pathways 53.2",
                           "Growth Analysis",
                           "length_mean_ages_wae.rds"))
-fit_nop <- readRDS(file.path("D:",
+fit_nop <- readRDS(file.path("G:",
                           "Shared drives",
                           "Hansen Lab",
                           "RESEARCH PROJECTS",
                           "MAISRC Mercury Pathways 53.2",
                           "Growth Analysis",
                           "length_mean_ages_nop.rds"))
-fit_blg <- readRDS(file.path("D:",
+fit_blg <- readRDS(file.path("G:",
                           "Shared drives",
                           "Hansen Lab",
                           "RESEARCH PROJECTS",
@@ -633,9 +652,8 @@ fit_blg <- readRDS(file.path("D:",
 
 # output
 ```{r}
-plot(fit_wae)
-summary(fit_wae)
-plot(conditional_effects(fit_wae))
+summary(fit_nop)
+plot(conditional_effects(fit_nop))
 ```
 
 # lake level exposure effect
