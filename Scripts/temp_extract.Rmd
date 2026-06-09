@@ -1,0 +1,180 @@
+---
+title: "temp_prcp_data_nclimgrid"
+author: "Denver Link"
+date: "2026-06-09"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Library
+```{r}
+library(tidyverse)
+library(terra)
+library(sf)
+library(arrow)
+library(purrr)
+```
+
+# MN Lakes
+```{r}
+mn_data <- open_dataset(sources = file.path("D:",
+                                            "Shared drives",
+                                            "Hansen Lab",
+                                            "RESEARCH PROJECTS",
+                                            "Fish Survey Data",
+                                            "Parquet files",
+                                            "mn_update")) 
+names(mn_data)
+
+mn_lakes <- mn_data %>% 
+  select(lake_id, nhdhr_id, latitude_lake_centroid, longitude_lake_centroid) %>% 
+  filter(!is.na(latitude_lake_centroid)) %>% 
+  distinct(lake_id, nhdhr_id, latitude_lake_centroid, longitude_lake_centroid) %>% 
+  collect()
+
+mn_lakes %>% 
+  group_by(nhdhr_id) %>% 
+  summarise(n_lat_lon = n_distinct(latitude_lake_centroid, longitude_lake_centroid)) %>% 
+  filter(n_lat_lon >1)
+
+mn_lakes %>% 
+  filter(nhdhr_id %in% c("nhdhr_120019424", "nhdhr_34123413", "nhdhr_34243896", "nhdhr_80996157", "nhdhr_86272945")) %>% 
+  arrange(nhdhr_id, lake_id, latitude_lake_centroid, longitude_lake_centroid)
+#mn lakes with a lat/lon with lake id and nhdhr
+#we see that some cases have multpule lake ids within an nhdhr - not unexpected and generally "unique" systems 
+rm(mn_data)
+
+lakes_vect <- vect(mn_lakes,
+                   geom = c("longitude_lake_centroid",
+                            "latitude_lake_centroid"),
+                   crs = "EPSG:4326")
+tmax_vals <- terra::extract(tmax, lakes_vect)
+```
+
+# clim data
+```{r}
+files <- list.files(
+  "Data/clim/2024",
+  pattern = "\\.nc$",
+  full.names = TRUE
+)
+```
+
+# Jan test try
+```{r}
+jan <- sds(files[1])
+
+#tmax and tmin data
+tmax <- jan[["tmax"]]
+tmin <- jan[["tmin"]]
+nlyr(tmax)
+nlyr(tmin)
+#we see 31 days of each
+
+#grab temp for each lake and keep lake id
+jan_tmax <- extract(tmax,lakes_vect) %>% 
+  mutate(lake_id = mn_lakes$lake_id)
+#we can see the date here
+time(tmax)
+
+#lets try a bulk extraction 
+extract_month <- function(file, lakes_vect) {
+
+  s <- terra::sds(file)
+
+  list(
+    tmax = terra::extract(s[["tmax"]], lakes_vect),
+    tmin = terra::extract(s[["tmin"]], lakes_vect)
+  )
+}
+jan <- extract_month(file = files[1], lakes_vect = lakes_vect)
+names(jan)
+head(jan_tmax)
+
+s <- sds(files[1])
+
+cells <- cellFromXY(
+  s[["tmax"]][[1]],
+  crds(lakes_vect)
+)
+
+length(unique(cells))
+```
+
+# full go
+```{r}
+extract_month <- function(file, lakes_vect, lake_ids) {
+
+  s <- sds(file)
+
+  dates <- as.Date(time(s[["tmax"]]))
+
+  tmax <- extract(s[["tmax"]], lakes_vect)
+  tmin <- extract(s[["tmin"]], lakes_vect)
+
+  tmax_long <- tmax |>
+  mutate(lake_id = lake_ids) |>
+  select(-ID) |>
+  pivot_longer(
+    -lake_id,
+    names_to = "layer",
+    values_to = "tmax"
+  ) |>
+  mutate(
+    day_num = as.integer(gsub("tmax_", "", layer)),
+    date = dates[day_num]
+  ) |>
+  select(-layer, -day_num)
+
+  tmin_long <- tmin |>
+  mutate(lake_id = lake_ids) |>
+  select(-ID) |>
+  pivot_longer(
+    -lake_id,
+    names_to = "layer",
+    values_to = "tmin"
+  ) |>
+  mutate(
+    day_num = as.integer(gsub("tmin_", "", layer)),
+    date = dates[day_num]
+  ) |>
+  select(-layer, -day_num)
+
+
+  out <- tmax_long |>
+  left_join(
+    tmin_long,
+    by = c("lake_id", "date")
+  )
+
+  out
+}
+
+clim_2024 <- map_dfr(
+  files,
+  extract_month,
+  lakes_vect = lakes_vect,
+  lake_ids = mn_lakes$lake_id
+) %>% 
+  mutate(
+    tmean = (tmax + tmin) / 2,
+    gdd5 = pmax(tmean - 5, 0),
+    gdd10 = pmax(tmean - 10, 0)
+  ) %>% 
+   arrange(lake_id, date) |>
+  group_by(lake_id, year = lubridate::year(date)) |>
+  mutate(
+    gdd5_cum = cumsum(gdd5),
+    gdd10_cum = cumsum(gdd10)
+  ) |>
+  ungroup()
+
+clim_2024 %>% 
+  filter(lake_id == "10000200") %>% 
+  ggplot() +
+  geom_point(aes(date, gdd5_cum), color = "blue") +
+  geom_point(aes(date, gdd10_cum), color = "orange")
+  
+```
+

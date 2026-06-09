@@ -6,12 +6,6 @@ editor_options:
   chunk_output_type: console
 ---
 
-Update on 4/16/2026:
-This filtering was created on the estimated age, where we do not include fish that were born before invasion but captured after (mixed). However, we should maybe consider if an ALK was constructed with "mixed" groups. In that, we filtered out estimated ages, but they could be bias if an ALK was constructed of fish who lived through invasion. This likely shouldn't be a problem because we should be accurate ALKs that our estimated ages should be representative of the real ages. We also have a filter step such that lakes include years 1-5 with out any missing years.
-
-I did not exclude ssw lakes, so lakes here could be zm only or both zm and ssw. 
-
-
 # library
 ```{r}
 library(tidyverse)
@@ -115,6 +109,503 @@ gdd <- gdd %>%
          gdd_anom = gdd_wtr_5c - lake_avg_gdd) %>% 
   ungroup()
 ```
+
+# Inventory of sample size with varying filtering
+```{r}
+age_data <- mn_data %>% 
+  #filter MN data for fish with alked year level data
+  filter(alk == "year") %>% 
+  left_join(zm_ssw, by = "lake_id") %>% 
+  select(lake_id,
+         nhdhr_id,
+         date_total_effort_ident,
+         date_sample,
+         year,
+         sampling_method,
+         site_id,
+         species_1,
+         length_1,
+         length_unit_1,
+         age,
+         aging_structure_1,
+         sex,
+         est_age,
+         alk,
+         alk_age_str,
+         alk_length,
+         alk_n,
+         weight_1,
+         weight_unit_1,
+         flag,
+         notes_1,
+         zm) %>% 
+  collect() 
+
+#################ALK exploration##############################################
+age_data %>% 
+  summarise(n_spec_lake_years = n_distinct(species_1, year, lake_id),
+            n_spec_lake = n_distinct(species_1, lake_id),
+            n_lake = n_distinct(lake_id))
+  
+
+age_data %>% 
+  group_by(lake_id) %>% 
+  summarise(n_spec = n_distinct(species_1)) %>%
+  summarise(mean_n_species = mean(n_spec),
+            median_n_species = median(n_spec))
+  
+
+age_data %>% 
+  group_by(lake_id) %>% 
+  summarise(n_spec_years = n_distinct(species_1, year)) %>%
+  summarise(mean_n_species = mean(n_spec_years),
+            median_n_species = median(n_spec_years))
+
+age_data %>% 
+  distinct(lake_id, species_1, year, alk_age_str) %>% 
+  group_by(alk_age_str) %>% 
+  summarise(n = n(),
+            prop = n/4415,
+            percent = prop*100)
+
+
+age_data %>%
+  distinct(lake_id, species_1, year, alk_age_str) %>%
+  count(species_1, year, alk_age_str, name = "n") %>%
+  group_by(species_1, year) %>%
+  complete(alk_age_str, fill = list(n = 0)) %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup() %>% 
+  ggplot(aes(year, prop, color = alk_age_str)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~ species_1) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Proportion", x = "Year", color = "Age Str") +
+  theme(legend.position = c(.8, .1))
+#ggsave("prop_alk_str.jpg", height = 5, width = 7)
+
+age_data %>% 
+  distinct(lake_id, year, alk_age_str) %>%
+  filter(year > 2020 & alk_age_str == "scale") %>% 
+  group_by(lake_id) %>% 
+  count()
+
+age_data %>%
+  filter(alk_age_str == "scale") %>%
+  filter(!is.na(aging_structure_1)) %>%
+  distinct(lake_id, year, species_1, aging_structure_1) %>%
+  group_by(lake_id, year, species_1) %>%
+  summarise(
+    structures = paste(sort(aging_structure_1), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  count(structures, sort = TRUE) %>% 
+  mutate(n_total = sum(n),
+         prop = n/n_total) %>% 
+  print(n = nrow(.))
+##############################################################################
+age_data %>% 
+  filter(!is.na(zm)) %>% 
+  summarise(n_distinct(lake_id),
+            n_distinct(lake_id, species_1),
+            n_distinct(lake_id, species_1, year))
+
+age_data %>% 
+  filter(!is.na(zm)) %>% 
+  distinct(lake_id, species_1, year, alk_age_str) %>% 
+  group_by(alk_age_str) %>% 
+  summarise(n = n()) %>% 
+  mutate(prop = n/sum(n),
+         percent = prop*100)
+
+exposure_summary <- age_data %>%
+  filter(!is.na(zm)) %>%
+  mutate(
+    birth_year = year - est_age,
+    exposure = case_when(
+      year < zm ~ "before",
+      birth_year >= zm ~ "after",
+      TRUE ~ "mixed"
+    )
+  ) %>%
+  group_by(lake_id, species_1, exposure) %>%
+  summarise(n_years = n_distinct(year), .groups = "drop") %>%
+  group_by(lake_id, species_1) %>%
+  summarise(
+    exposure_combo = paste(sort(exposure), collapse = " + "),
+    .groups = "drop"
+  )
+
+
+exposure_summary %>% 
+  group_by(species_1, exposure_combo) %>% 
+  summarise(lakes = n()) %>% 
+ggplot(aes(x = exposure_combo, y = species_1, fill = lakes)
+) +
+  geom_tile(alpha = .5,show.legend = F) +
+  geom_text(aes(label = lakes), size = 4) +
+  labs(
+    x = NULL,
+    y = NULL
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(
+      angle = 30,
+      hjust = 1,
+      vjust = 1
+    )
+  )
+#ggsave("heat_map_zm_lakes.jpg", height = 5, width = 7)
+rm(exposure_summary)
+
+age_data %>%
+  filter(!is.na(zm)) %>%
+  mutate(
+    birth_year = year - est_age,
+    exposure = case_when(
+      year < zm ~ "before",
+      birth_year >= zm ~ "after",
+      TRUE ~ "mixed"
+    )
+  ) %>%
+  distinct(lake_id, species_1, exposure) %>%
+  group_by(lake_id, species_1) %>%
+  summarise(
+    has_before = "before" %in% exposure,
+    has_after = "after" %in% exposure,
+    .groups = "drop"
+  ) %>%
+  filter(has_before & has_after) %>%
+  count(species_1, name = "n_lakes") %>% 
+  arrange(desc(n_lakes))
+
+age_data %>%
+  filter(!is.na(zm)) %>%
+  mutate(
+    birth_year = year - est_age,
+    exposure = case_when(
+      year < (zm + 2) ~ "before",
+      birth_year >= (zm + 2) ~ "after",
+      TRUE ~ "mixed"
+    )
+  ) %>%
+  distinct(lake_id, species_1, exposure) %>%
+  group_by(lake_id, species_1) %>%
+  summarise(
+    has_before = "before" %in% exposure,
+    has_after = "after" %in% exposure,
+    .groups = "drop"
+  ) %>%
+  filter(has_before & has_after) %>%
+  count(species_1, name = "n_lakes") %>% 
+  arrange(desc(n_lakes))
+
+#before and after lakes 
+valid_groups <- age_data %>% 
+  mutate(
+    birth_year = year - est_age,
+    exposure = case_when(
+      year < zm ~ "before",
+      birth_year >= zm ~ "after",
+      TRUE ~ "mixed"
+    )
+  ) %>%
+  group_by(lake_id, species_1) %>% 
+  summarise(
+    has_before = any(exposure == "before"),
+    has_after  = any(exposure == "after"),
+    .groups = "drop"
+  ) %>% 
+  filter(
+    has_before,
+    has_after
+  )
+
+age_data_filtered <- age_data %>% 
+  semi_join(valid_groups, by = c("lake_id", "species_1"))
+
+age_check <- age_data_filtered %>%
+  group_by(lake_id, year, species_1) %>%
+  mutate(
+    birth_year = year - est_age,
+    exposure = case_when(
+      year < zm ~ "before",
+      birth_year >= zm ~ "after",
+      TRUE ~ "mixed"
+    )
+  ) %>% 
+  summarise(
+    n_ages_before = n_distinct(est_age[exposure == "before" & !is.na(est_age)]),
+    n_ages_after  = n_distinct(est_age[exposure == "after"  & !is.na(est_age)]),
+    #.groups = "drop"
+  ) 
+
+age_check %>%
+  pivot_longer(
+    cols = c(n_ages_before, n_ages_after),
+    values_to = "n",
+    names_to = "exposure"
+  ) %>%
+  ggplot(aes(n, fill = exposure)) +
+  geom_histogram(
+    position = "dodge",
+    binwidth = 1,
+    #color = "black"
+  ) +
+  geom_vline(xintercept = 5) +
+  facet_wrap(~species_1) +
+  theme_bw() +
+  theme(legend.position = c(.83, 0.1))
+#ggsave("unique_ages_before_after.jpg", height = 5, width = 5)
+
+glimpse(age_check)
+
+#now lets filter so that we get lake years with before and after that have at least 5 age groupings
+lakes_5 <- age_check %>% 
+  group_by(lake_id, species_1) %>% 
+   summarise(
+    has_before_5 = any(n_ages_before >= 5),
+    has_after_5  = any(n_ages_after >= 5),
+    .groups = "drop"
+  ) %>% 
+  filter(has_before_5, has_after_5)
+
+lakes_5 %>% 
+  count(species_1, name = "n_lakes")
+  
+age_data_filtered <- age_data %>% 
+  semi_join(lakes_5, by = c("lake_id", "species_1")) %>% 
+  group_by(lake_id, year, species_1) %>%
+  mutate(
+    birth_year = year - est_age,
+    exposure = case_when(
+      year < zm ~ "before",
+      birth_year >= zm ~ "after",
+      TRUE ~ "mixed"
+    )
+  ) 
+
+age_data_filtered %>% 
+  ungroup() %>% 
+  summarise(n_distinct(lake_id, species_1))
+
+age_data_filtered %>% 
+  group_by(species_1, exposure, est_age) %>% 
+  summarise(n_lakes = n_distinct(lake_id)) %>% 
+  left_join(age_data_filtered %>% 
+              group_by(species_1) %>% 
+              summarise(total_lakes = n_distinct(lake_id), .groups = "drop"),
+                        by = c("species_1")) %>% 
+              mutate(prop_lakes = n_lakes/ total_lakes) %>% 
+  filter(exposure != "mixed") %>% 
+  ggplot() +
+  geom_tile(aes(est_age, exposure, fill = prop_lakes)) +
+  facet_wrap(~species_1, scales = "free_x") +
+  theme(legend.position = c(0.83, 0.1))
+#ggsave("heat_ages_spec.jpg", height = 5, width = 7)
+
+target_ages <- tibble::tribble(
+  ~species_1,        ~est_age,
+  "walleye",          1,
+  "walleye",          2,
+  "walleye",          3,
+  "walleye",          4,
+  "walleye",          5,
+  "northern_pike",    1,
+  "northern_pike",    2,
+  "northern_pike",    3,
+  "northern_pike",    4,
+  "northern_pike",    5,
+  "bluegill",         2,
+  "bluegill",         3,
+  "bluegill",         4,
+  "bluegill",         5,
+  "bluegill",         6)
+
+qualified_years <- age_data_filtered %>%
+  distinct(lake_id, year, species_1, exposure, est_age) %>%
+  inner_join(target_ages,
+             by = c("species_1", "est_age")) %>%
+  count(lake_id, year, species_1, exposure,
+        name = "n_target_ages") %>% 
+  filter(exposure != "mixed" & n_target_ages == 5) %>% 
+  group_by(lake_id, species_1) %>% 
+  summarise(has_before = any(exposure == "before"),
+            has_after = any(exposure == "after"),
+            .groups = "drop") %>% 
+  filter(has_before, has_after)
+
+qualified_years %>% 
+  group_by(species_1) %>% 
+  count()
+rm(valid_groups, target_ages, lake_age_summary, age_check)
+
+aging_changes <- age_data_filtered %>%
+  semi_join(qualified_years, by = c("lake_id", "species_1")) %>%
+  filter(exposure != "mixed") %>%
+  distinct(lake_id, species_1, exposure, alk_age_str) %>%
+  group_by(lake_id, species_1, exposure) %>%
+  summarise(
+    structures = paste(sort(unique(alk_age_str)), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = exposure,
+    values_from = structures
+  ) %>%
+  mutate(
+    changed = before != after
+  )
+
+aging_changes %>%
+  count(species_1, changed)
+
+aging_changes %>%
+  count(species_1, before, after, sort = TRUE)
+
+ggplot(aging_changes %>% 
+         group_by(species_1, before, after) %>% 
+         count(),
+       aes(before, after, fill = n)) +
+  geom_tile() +
+  scale_fill_gradient(low = "gray", high = "white") +
+  geom_text(aes(label = n)) +
+  facet_wrap(~species_1, scales = "free") +
+  theme_bw() +
+   theme(
+    axis.text.x = element_text(
+      angle = 30,
+      hjust = 1,
+      vjust = 1
+    ),
+    legend.position = "none"
+  )
+#ggsave("heat_pre_post_str.jpg", height = 5, width = 7)
+rm(aging_changes)
+
+#how many years past 2021 do we have and how would that change n lakes?
+gdd_check <- age_data_filtered %>%
+  ungroup() %>% 
+  semi_join(qualified_years, by = c("lake_id", "species_1")) %>%
+  filter(exposure != "mixed") 
+
+gdd_check %>% 
+  distinct(lake_id, species_1, exposure, year) %>% 
+  filter(year <= 2021) %>% 
+  group_by(lake_id, species_1) %>% 
+  summarise(has_before = any(exposure == "before"),
+            has_after = any(exposure == "after"),
+            .groups = "drop") %>% 
+  filter(has_before, has_after) %>% 
+  group_by(species_1) %>% 
+  count()
+
+gdd_check %>% 
+  filter(year <= 2021) %>% 
+  distinct(lake_id, species_1, exposure, year, zm) %>% 
+  group_by(lake_id, species_1, exposure, zm) %>% 
+  summarise(max_year = max(year)) %>% 
+  mutate(zm_lag = zm + 2) %>% 
+  filter(exposure == "after") %>% 
+  summarise(n_lag_cut = (zm_lag >= max_year)) %>% 
+  group_by(species_1, n_lag_cut) %>% 
+  count()
+
+gdd_check %>% 
+  filter(year <= 2021) %>% 
+  distinct(lake_id, species_1, exposure, year, zm) %>% 
+  group_by(lake_id, species_1, exposure, zm) %>% 
+  summarise(max_year = max(year)) %>% 
+  mutate(zm_lag = zm + 2) %>% 
+  filter(exposure == "after") %>% 
+  print(n = nrow(.))
+
+
+age_data_filtered %>% 
+  filter(lake_id == "61013000" & species_1 == "walleye") %>% 
+  group_by(year, exposure, est_age) %>% 
+  count() %>% 
+  print(n = nrow(.))
+
+glimpse(gdd)
+gdd %>% 
+  filter(lake_id == "11041500")
+rm(gdd_check)
+
+#############################################################################
+age_data_zm <- age_data %>% 
+  filter(!is.na(zm)) %>% 
+  mutate(
+    birth_year = year - est_age,
+    exposure = case_when(
+      year < zm ~ "before",
+      birth_year >= zm ~ "after",
+      TRUE ~ "mixed"
+    )
+  ) %>% 
+  filter(exposure == "after") %>% 
+  ungroup()
+glimpse(age_data_zm)
+
+age_data_zm %>% 
+  group_by(species_1, est_age) %>% 
+  summarise(n_lakes = n_distinct(lake_id)) %>% 
+  ggplot() +
+  geom_line(aes(est_age, n_lakes)) +
+  geom_line(data = age_data_zm %>% 
+              filter(alk_age_str == "otolith") %>% 
+              group_by(species_1, est_age) %>% 
+              summarise(n_lakes = n_distinct(lake_id)), aes(est_age, n_lakes), color = "red") +
+  geom_point(aes(est_age, n_lakes)) +
+  facet_wrap(~species_1, scales = "free_y") +
+  theme_bw()
+
+age_data_zm  %>% 
+  distinct(lake_id, species_1, zm, year) %>% 
+  mutate(timing = year - zm) %>% 
+  ggplot() +
+  geom_histogram(aes(timing),binwidth = 1) +
+  geom_vline(xintercept = 5) +
+  facet_wrap(~species_1)
+
+age_data_zm  %>% 
+  distinct(lake_id, species_1, zm, year) %>% 
+  summarise(n_lake_years = n_distinct(lake_id, species_1, years))
+
+age_data_zm  %>% 
+  distinct(lake_id, species_1, zm, year) %>% 
+  summarise(n_lake_years = n_distinct(lake_id))
+
+age_data_zm %>% 
+  distinct(lake_id, species_1, year) %>% 
+  group_by(lake_id, species_1) %>% 
+  summarise(n_years = n()) %>% 
+  ggplot() +
+  geom_histogram(aes(n_years), binwidth = 1) +
+  facet_wrap(~species_1)
+
+age_data_zm %>% 
+  distinct(lake_id, species_1, year) %>% 
+  group_by(lake_id, species_1) %>% 
+  summarise(n_years = n()) %>% 
+  group_by(species_1) %>% 
+  summarise(min = min(n_years),
+            mean = mean(n_years),
+            median = median(n_years),
+            max = max(n_years),
+            n = n())
+
+age_data_zm %>% 
+  distinct(lake_id, species_1, year) %>% 
+  group_by(lake_id, species_1) %>% 
+  summarise(n_years = n()) %>% 
+  group_by(species_1) %>% 
+  summarise(n_1_year = sum(n_years == 1),
+            n = n()) %>% 
+  mutate(prop_1 = n_1_year/n)
+```
+
 
 # filter for analysis 
 ```{r}
