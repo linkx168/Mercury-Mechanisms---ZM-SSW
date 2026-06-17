@@ -18,7 +18,7 @@ library(purrr)
 
 # MN Lakes
 ```{r}
-mn_data <- open_dataset(sources = file.path("D:",
+mn_data <- open_dataset(sources = file.path("G:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -49,8 +49,120 @@ lakes_vect <- vect(mn_lakes,
                    geom = c("longitude_lake_centroid",
                             "latitude_lake_centroid"),
                    crs = "EPSG:4326")
-tmax_vals <- terra::extract(tmax, lakes_vect)
 ```
+
+# trial reading in data from URL
+```{r}
+extract_month_remote <- function(year,
+                                 month,
+                                 lakes_vect,
+                                 lake_ids) {
+
+  url <- paste0(
+    "https://www.ncei.noaa.gov/data/nclimgrid-daily/access/grids/",
+    year,
+    "/ncdd-",
+    year,
+    sprintf("%02d", month),
+    "-grd-scaled.nc"
+  )
+
+  tmp <- tempfile(fileext = ".nc")
+
+  on.exit({
+    if (file.exists(tmp)) unlink(tmp)
+  }, add = TRUE)
+
+  download.file(
+    url,
+    destfile = tmp,
+    mode = "wb",
+    quiet = TRUE
+  )
+
+  s <- sds(tmp)
+
+  dates <- as.Date(time(s[["tmax"]]))
+
+  make_long <- function(rast_obj, prefix, value_name) {
+
+    extract(rast_obj, lakes_vect) |>
+      mutate(lake_id = lake_ids) |>
+      select(-ID) |>
+      pivot_longer(
+        -lake_id,
+        names_to = "layer",
+        values_to = value_name
+      ) |>
+      mutate(
+        day_num = as.integer(
+          gsub(paste0(prefix, "_"), "", layer)
+        ),
+        date = dates[day_num]
+      ) |>
+      select(-layer, -day_num)
+  }
+
+  tmax_long <- make_long(
+    s[["tmax"]],
+    "tmax",
+    "tmax"
+  )
+
+  tmin_long <- make_long(
+    s[["tmin"]],
+    "tmin",
+    "tmin"
+  )
+
+  prcp_long <- make_long(
+    s[["prcp"]],
+    "prcp",
+    "prcp"
+  )
+
+  tavg_long <- make_long(
+    s[["tavg"]],
+    "tavg",
+    "tavg"
+  )
+
+  tmax_long |>
+    left_join(tmin_long,
+              by = c("lake_id", "date")) |>
+    left_join(prcp_long,
+              by = c("lake_id", "date")) |>
+    left_join(tavg_long,
+              by = c("lake_id", "date")) |>
+    mutate(
+      year = year(date),
+      doy = yday(date)
+    )
+}
+
+process_year <- function(year,
+                         lakes_vect,
+                         lake_ids) {
+
+  map_dfr(
+    1:12,
+    \(m) extract_month_remote(
+      year = year,
+      month = m,
+      lakes_vect = lakes_vect,
+      lake_ids = lake_ids
+    )
+  )
+}
+
+clim_2024 <- process_year(
+  year = 2024,
+  lakes_vect = lakes_vect,
+  lake_ids = mn_lakes$lake_id
+)
+```
+
+
 
 # clim data
 ```{r}
