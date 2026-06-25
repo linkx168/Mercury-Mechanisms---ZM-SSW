@@ -51,7 +51,7 @@ lakes_vect <- vect(mn_lakes,
                    crs = "EPSG:4326")
 ```
 
-# trial reading in data from URL
+# nclim data from URL
 ```{r}
 extract_month_remote <- function(year,
                                  month,
@@ -137,7 +137,15 @@ extract_month_remote <- function(year,
     mutate(
       year = year(date),
       doy = yday(date)
-    )
+    ) %>% 
+    select(lake_id,
+           date,
+           year, 
+           doy,
+           tmax,
+           tmin,
+           tavg,
+           prcp)
 }
 
 process_year <- function(year,
@@ -146,147 +154,133 @@ process_year <- function(year,
 
   map_dfr(
     1:12,
-    \(m) extract_month_remote(
-      year = year,
-      month = m,
-      lakes_vect = lakes_vect,
-      lake_ids = lake_ids
-    )
+    function(m){
+
+      message(
+        "Year: ",
+        year,
+        " Month: ",
+        sprintf("%02d", m)
+      )
+
+      extract_month_remote(
+        year = year,
+        month = m,
+        lakes_vect = lakes_vect,
+        lake_ids = lake_ids
+      )
+    }
   )
 }
 
-clim_2024 <- process_year(
-  year = 2024,
+save_year <- function(year,
+                      lakes_vect,
+                      lake_ids,
+                      out_dir = "Data/nclim_lake_daily") {
+
+  message("Starting year ", year)
+
+  clim_year <- process_year(
+    year = year,
+    lakes_vect = lakes_vect,
+    lake_ids = lake_ids
+  )
+
+  write_dataset(
+    clim_year,
+    path = out_dir,
+    partitioning = "year",
+    existing_data_behavior = "delete_matching"
+  )
+
+  rm(clim_year)
+  gc()
+
+  message("Finished year ", year)
+}
+
+#output directory
+dir.create(
+  "Data/nclim_lake_daily",
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+#processes just one year
+save_year(
+  year = 1951,
   lakes_vect = lakes_vect,
   lake_ids = mn_lakes$lake_id
 )
-```
 
+check <- open_dataset(file.path("Data",
+                                "nclim_lake_daily"),
+                      partitioning = "year") %>% 
+  as.tibble()
+rm(check)
 
-
-# clim data
-```{r}
-files <- list.files(
-  "Data/clim/2024",
-  pattern = "\\.nc$",
-  full.names = TRUE
-)
-```
-
-# Jan test try
-```{r}
-jan <- sds(files[1])
-
-#tmax and tmin data
-tmax <- jan[["tmax"]]
-tmin <- jan[["tmin"]]
-nlyr(tmax)
-nlyr(tmin)
-#we see 31 days of each
-
-#grab temp for each lake and keep lake id
-jan_tmax <- extract(tmax,lakes_vect) %>% 
-  mutate(lake_id = mn_lakes$lake_id)
-#we can see the date here
-time(tmax)
-
-#lets try a bulk extraction 
-extract_month <- function(file, lakes_vect) {
-
-  s <- terra::sds(file)
-
-  list(
-    tmax = terra::extract(s[["tmax"]], lakes_vect),
-    tmin = terra::extract(s[["tmin"]], lakes_vect)
-  )
-}
-jan <- extract_month(file = files[1], lakes_vect = lakes_vect)
-names(jan)
-head(jan_tmax)
-
-s <- sds(files[1])
-
-cells <- cellFromXY(
-  s[["tmax"]][[1]],
-  crds(lakes_vect)
-)
-
-length(unique(cells))
-```
-
-# full go
-```{r}
-extract_month <- function(file, lakes_vect, lake_ids) {
-
-  s <- sds(file)
-
-  dates <- as.Date(time(s[["tmax"]]))
-
-  tmax <- extract(s[["tmax"]], lakes_vect)
-  tmin <- extract(s[["tmin"]], lakes_vect)
-
-  tmax_long <- tmax |>
-  mutate(lake_id = lake_ids) |>
-  select(-ID) |>
-  pivot_longer(
-    -lake_id,
-    names_to = "layer",
-    values_to = "tmax"
-  ) |>
-  mutate(
-    day_num = as.integer(gsub("tmax_", "", layer)),
-    date = dates[day_num]
-  ) |>
-  select(-layer, -day_num)
-
-  tmin_long <- tmin |>
-  mutate(lake_id = lake_ids) |>
-  select(-ID) |>
-  pivot_longer(
-    -lake_id,
-    names_to = "layer",
-    values_to = "tmin"
-  ) |>
-  mutate(
-    day_num = as.integer(gsub("tmin_", "", layer)),
-    date = dates[day_num]
-  ) |>
-  select(-layer, -day_num)
-
-
-  out <- tmax_long |>
-  left_join(
-    tmin_long,
-    by = c("lake_id", "date")
-  )
-
-  out
-}
-
-clim_2024 <- map_dfr(
-  files,
-  extract_month,
+#########run for all years#####################
+purrr::walk(
+  1951:2025,
+  save_year,
   lakes_vect = lakes_vect,
   lake_ids = mn_lakes$lake_id
-) %>% 
-  mutate(
-    tmean = (tmax + tmin) / 2,
-    gdd5 = pmax(tmean - 5, 0),
-    gdd10 = pmax(tmean - 10, 0)
+)
+rm(lakes_vect, mn_lakes)
+```
+
+# quick exploration 
+```{r}
+#open dataset
+clim <- open_dataset(file.path("Data",
+                     "nclim_lake_daily"),
+                     partitioning = "year")
+names(clim)
+
+#how many years, min and max years
+clim %>% 
+  summarise(n_years = n_distinct(year),
+            min_year = min(year),
+            max_year = max(year)) %>% 
+  collect()
+
+#yearly average temp for each lake, what is the trend?
+clim %>% 
+  group_by(lake_id, year) %>% 
+  summarize(
+    mean_tavg = mean(tavg, na.rm = TRUE)
   ) %>% 
-   arrange(lake_id, date) |>
-  group_by(lake_id, year = lubridate::year(date)) |>
-  mutate(
-    gdd5_cum = cumsum(gdd5),
-    gdd10_cum = cumsum(gdd10)
-  ) |>
-  ungroup()
-
-clim_2024 %>% 
-  filter(lake_id == "10000200") %>% 
+  collect() %>% 
   ggplot() +
-  geom_point(aes(date, gdd5_cum), color = "blue") +
-  geom_point(aes(date, gdd10_cum), color = "orange")
-  
+  geom_point(aes(year, mean_tavg), color = "orange", alpha = .5) +
+  geom_smooth(aes(year, mean_tavg)) 
+#ggsave("yearly_average_temp.jpg", height = 5, width = 5)
+
+clim %>% 
+  group_by(year, doy) %>% 
+  summarize(
+    tavg = mean(tavg, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  collect() %>% 
+  ggplot(
+    aes(doy, year, fill = tavg)
+  ) +
+  geom_tile() +
+  scale_fill_viridis_c(
+    option = "plasma",
+    name = "Temp (°C)"
+  ) +
+  theme(legend.position = "bottom")
+#ggsave("tile_temps.jpg", height = 5, width = 5)
+
+clim %>% 
+  filter(lake_id == "1000100") %>% 
+  filter(year > 2020 & year < 2026) %>% 
+  collect() %>% 
+  ggplot(aes(date, tavg)) +
+  geom_line(alpha = 0.3) +
+  labs(title = "Pine Lake 2021-2025")
+#ggsave("one_lake.jpg", height = 5 , width = 5)
 ```
 
