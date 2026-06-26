@@ -1,0 +1,143 @@
+---
+title: "temp_extract_example"
+author: "Denver Link"
+date: "2026-06-25"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Overview
+This document demonstrates how to access and use the Minnesota lake climate dataset, which contains daily air temperature and precipitation data for more than 4,000 lakes from 1951–2025. Because the dataset is stored as partitioned Apache Parquet files, the examples emphasize memory-efficient workflows using the arrow package. The tutorial covers how to (1) read the climate data, (2) join daily climate records to a list of lakes using Minnesota DOW lake IDs (including handling leading zeros and lakes without matching climate data), and (3) calculate annual climate summaries, such as growing degree days (GDD), before collecting data into R to improve performance. These examples can be adapted for attaching either daily or annual climate metrics to any dataset with MN Dows.
+
+
+# Library
+```{r}
+library(tidyverse) # for normal data stuff
+library(arrow) # reading in climate data
+```
+
+# Data
+```{r}
+#reading in parquet files
+clim <- open_dataset(file.path("G:", # you may have to change this to match your local letter for g drive
+                               "Shared drives",
+                               "Hansen Lab",
+                               "MN_Lake_Temp_Data",
+                               "air_temps",
+                               "nclim_lake_daily"),
+                     partitioning = "year")
+# partitioning is just how the data are stored, its an arrow thing 
+# this has 10s of millions of rows (4000+ lakes, each with a daily value between 1951-2025)
+
+# due to the storage structure of parquet objects, arrow does not like some tidyverse calls and we have to be careful not to do operations that need the whole dataset (it will crash our R session)
+#names is an arrow friendly function that lets us see look at the columns we are dealing with
+names(clim)
+```
+
+# attach climate data to lakes
+
+-I extracted climate data for all lakes with a DOW and lat/lon in the MidFish database, which should include most lakes that are of interest. Each row in this data is a lake-day with the tmin, tavg, tmax, and prcp. This chunk will show how to join the climate data based on lake id
+*lake id is for MN DOWs, this product use leading 0's*, I'll show an example
+```{r}
+# lets create a short list of DOWs for joining (think of this as your lake data frame)
+# I include an example with a leading 0 in case that might be a problem
+lakes <- tibble::tibble(
+  lake_id = c(
+    "18035200",  # this lake is bomb
+    "27013300",  # minnetonka
+    "27013301",  # minnetonka bay
+    "04001100"   # lake with a leading 0
+  )
+)
+glimpse(lakes)
+# our object has six lakes ready for joining to climate data
+
+
+# arrow objects can be touchy, they need to be first (otherwise it will spit an error)
+# lets do a join where we keep all data from out lakes object and attach climate data where there is lake id overlap
+# this will be a right join, we will keep all lake data that we have AND add on clim data when it matches a lake id 
+lakes_clim <- clim %>%
+  right_join(lakes, by = "lake_id") %>% 
+  collect()
+glimpse(lakes_clim)
+#sweet, we have daily climate data, but we will need to check if our leading 0 join worked
+
+#lets check if we linked all climate data to our lake ids
+lakes_clim %>% 
+  distinct(lake_id)
+#we see our four dows here, this is expected and still doesn't show us if they have climate data
+
+lakes_clim %>% 
+  group_by(lake_id, is.na(tmax)) %>% 
+  count()
+# we see here we did not pick up clim data for tonka bay, this is expected (all fish data just links to the main basin and thus clim data were not generated for this DOW) - this should be considered if you have lakes that did not pick up any climate data but may have a main basin that do match 
+# we also see here that our leading 0 did not get climate data, lets fix the leading 0 and run it again (if you have leading 0's you will want to create non-leading 0 joining id column - and probs move this to the beginning where you read in data)
+
+lakes <- lakes %>% 
+  mutate(lake_id_fixed = sub("^0", "", lake_id)) # remove leading 0 if it exists at the beinning of a string
+glimpse(lakes) # nice it worked, our leading 0 does not exist in the fixed column and other ids stayed the same
+
+#same join as before, but lets now do it on lake_id_fixed
+lakes_clim <- clim %>%
+  #since these are different columns lets give them a suffix to track which df the names came from
+  right_join(lakes, by = c("lake_id" = "lake_id_fixed"), suffix = c("_clim", "_lakes")) %>% 
+  collect() %>% 
+  #lets remove the lake_id from the clim object and rename the lakes id to lake_id again (this ensures we retain all of our lake ids, even those that did not pick up clim data)
+  select(-lake_id_clim) %>% 
+  rename(lake_id = lake_id_lakes)
+
+lakes_clim %>% 
+  group_by(lake_id, is.na(tmax)) %>% 
+  count()
+#now we picked up clim data for the leading 0 lake, we also see we retain the tonka bay that did not have clim data
+```
+
+# what if we only care about annual gdd or something higher level? (not daily)
+```{r}
+# we can see here we have daily temps between 1951-2025, this shows you have quickly the df can grow
+lakes_clim %>% 
+  group_by(lake_id) %>% 
+  summarise(n_years = n_distinct(year),
+            n_days = n_distinct(doy, year))
+# rows in your df should be (n lakes with dow that matched to clim data * 27,394 (days 1951-2025) + n lakes without matching dow)
+# if you desire a higher level temp metric (annual gdd for each lake), that could be calculated before joining to your data to make it much less memory intensive (see an example below)
+
+# joining but with annual aggregation first 
+# we first get a lake-year annual gdd, and then attach it to our lakes of interest
+lakes_clim_annual <- clim %>% 
+   mutate(
+    gdd0_day  = pmax(tavg - 0,  0),
+    gdd5_day  = pmax(tavg - 5,  0),
+    gdd10_day = pmax(tavg - 10, 0)
+  ) %>%
+  group_by(lake_id, year) %>%
+  summarise(
+    gdd0  = sum(gdd0_day, na.rm = TRUE),
+    gdd5  = sum(gdd5_day, na.rm = TRUE),
+    gdd10 = sum(gdd10_day, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  right_join(lakes, by = c("lake_id" = "lake_id_fixed"), suffix = c("_clim", "_lakes")) %>% 
+  select(-lake_id_clim) %>% 
+  rename(lake_id = lake_id_lakes) %>% 
+  collect() 
+# we calculate gdd for each lake-year prior to collecting, our R session can handle that easily!
+# we end up with (n lakes with matching dow * 75 years + n lakes without clim data)
+
+# you could even consider filtering to years of interst prior to collecting if memory is still a concern
+
+
+# lets just do a fun quick plot of the trend in annual gdd for each lake over the 75 year period for each temp base
+lakes_clim_annual %>% 
+  filter(!is.na(gdd0)) %>% #this removes any dows that did not pick up climate data
+  ggplot() +
+  geom_point(aes(year, gdd0), color = "red") +
+  geom_smooth(aes(year, gdd0), color = "red") +
+  geom_point(aes(year, gdd5), color = "orange") +
+  geom_smooth(aes(year, gdd5), color = "orange") +
+  geom_point(aes(year, gdd10), color = "blue") +
+  geom_smooth(aes(year, gdd10), color = "blue") +
+  facet_wrap(~lake_id)
+```
+
