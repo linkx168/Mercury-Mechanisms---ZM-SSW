@@ -14,11 +14,12 @@ library(terra)
 library(sf)
 library(arrow)
 library(purrr)
+library(RANN)
 ```
 
 # MN Lakes
 ```{r}
-mn_data <- open_dataset(sources = file.path("G:",
+mn_data <- open_dataset(sources = file.path("D:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -50,6 +51,95 @@ lakes_vect <- vect(mn_lakes,
                             "latitude_lake_centroid"),
                    crs = "EPSG:4326")
 ```
+
+# Any lakes that would return NA values?
+```{r}
+#let's take a look at just one layer
+year <- 1951
+month <- 1
+
+url <- paste0(
+  "https://www.ncei.noaa.gov/data/nclimgrid-daily/access/grids/",
+  year,
+  "/ncdd-",
+  year,
+  sprintf("%02d", month),
+  "-grd-scaled.nc"
+)
+
+tmp <- tempfile(fileext = ".nc")
+
+download.file(
+  url,
+  destfile = tmp,
+  mode = "wb"
+)
+
+s <- sds(tmp)
+
+tmax <- s[["tmax"]]
+
+test <- extract(tmax[[1]],
+                lakes_vect)
+
+problem_lakes <- mn_lakes %>% 
+  mutate(clim_values = test$tmax_1) %>% 
+  filter(is.na(clim_values))
+
+r <- tmax[[1]]
+valid_cells <- which(!is.na(values(r)))
+valid_xy <- xyFromCell(r, valid_cells)
+
+problem_xy <- as.matrix(
+  problem_lakes[, c("longitude_lake_centroid",
+                    "latitude_lake_centroid")]
+)
+
+nn <- nn2(
+  data = valid_xy,
+  query = problem_xy,
+  k = 1
+)
+
+problem_lakes$longitude_clim <-
+  valid_xy[nn$nn.idx, 1]
+
+problem_lakes$latitude_clim <-
+  valid_xy[nn$nn.idx, 2]
+
+problem_lakes$distance_deg <-
+  nn$nn.dists
+
+# now update the mn_lakes product
+mn_lakes_fixed <- mn_lakes %>%
+  left_join(
+    problem_lakes %>%
+      select(
+        lake_id,
+        latitude_clim,
+        longitude_clim
+      ),
+    by = "lake_id"
+  ) %>%
+  mutate(
+    latitude_lake_centroid = coalesce(latitude_clim,
+                                      latitude_lake_centroid),
+    longitude_lake_centroid = coalesce(longitude_clim,
+                                       longitude_lake_centroid)
+  ) %>%
+  select(-latitude_clim, -longitude_clim)
+
+rm(month, tmp, url, year, s, test, tmax, nn, problem_lakes, problem_xy, r, test, valid_xy, valid_cells)
+
+#now create updated vector 
+lakes_vect <- vect(
+  mn_lakes_fixed,
+  geom = c("longitude_lake_centroid",
+           "latitude_lake_centroid"),
+  crs = "EPSG:4326"
+)
+```
+
 
 # nclim data from URL
 ```{r}
@@ -217,6 +307,8 @@ check <- open_dataset(file.path("Data",
                                 "nclim_lake_daily"),
                       partitioning = "year") %>% 
   as.tibble()
+check %>% 
+  filter(lake_id == "39000200")
 rm(check)
 
 #########run for all years#####################

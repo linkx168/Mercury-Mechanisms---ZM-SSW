@@ -141,3 +141,171 @@ lakes_clim_annual %>%
   facet_wrap(~lake_id)
 ```
 
+
+```{r}
+lakes <- tibble::tibble(
+  lake_id = c(
+    "48000200",  #mille lacs
+    "04003500",  #red
+    "04003501",  
+    "04003502",
+    "39000201", #LOW
+    "39000200"
+  )
+)
+glimpse(lakes)
+# our object has six lakes ready for joining to climate data
+
+
+lakes <- lakes %>% 
+  mutate(lake_id_fixed = sub("^0", "", lake_id))
+
+#same join as before, but lets now do it on lake_id_fixed
+lakes_clim <- clim %>%
+  #since these are different columns lets give them a suffix to track which df the names came from
+  right_join(lakes, by = c("lake_id" = "lake_id_fixed"), suffix = c("_clim", "_lakes")) %>% 
+  collect() %>% 
+  #lets remove the lake_id from the clim object and rename the lakes id to lake_id again (this ensures we retain all of our lake ids, even those that did not pick up clim data)
+  select(-lake_id_clim) %>% 
+  rename(lake_id = lake_id_lakes)
+
+lakes_clim %>% 
+  group_by(lake_id, lake_id_fixed, is.na(tmax)) %>% 
+  count()
+#now we picked up clim data for the leading 0 lake, we also see we retain the tonka bay that did not have clim data
+```
+
+# QC checking NAs
+```{r}
+nas <- clim %>% 
+  filter(is.na(tmax)) %>% 
+  distinct(lake_id) %>% 
+  collect() %>% 
+  print(n = nrow(.))
+#28 places where we tried to extract temp data but its NA
+
+#lets look at our lakes and see what might be happening
+mn_data <- open_dataset(sources = file.path("G:",
+                                            "Shared drives",
+                                            "Hansen Lab",
+                                            "RESEARCH PROJECTS",
+                                            "Fish Survey Data",
+                                            "Parquet files",
+                                            "mn_update")) 
+
+mn_lakes <- mn_data %>% 
+  select(lake_id, lake_name, nhdhr_id, latitude_lake_centroid, longitude_lake_centroid) %>% 
+  filter(!is.na(latitude_lake_centroid)) %>% 
+  distinct(lake_id, lake_name, nhdhr_id, latitude_lake_centroid, longitude_lake_centroid) %>% 
+  collect()
+
+#filter for lakes that have na clim data
+nas <- nas %>% 
+  left_join(mn_lakes)
+glimpse(nas)
+
+library(sf)
+library(maps)
+
+# Convert to sf
+nas_sf <- st_as_sf(
+  nas,
+  coords = c("longitude_lake_centroid", "latitude_lake_centroid"),
+  crs = 4326
+)
+
+# US states
+states <- st_as_sf(map("state", plot = FALSE, fill = TRUE))
+
+ggplot() +
+  geom_sf(data = states, fill = "grey95", color = "grey60") +
+  geom_sf(data = nas_sf, color = "red", size = 2) +
+  coord_sf(
+    xlim = c(-98, -89),
+    ylim = c(43, 50),
+    expand = FALSE
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Lakes with NA Climate Data",
+    x = "Longitude",
+    y = "Latitude"
+  )
+# our NA lakes are mostly border waters (no surpise) and a few odd balls (two central MN and Mille Lacs)
+
+# now lets walk through some of the code to see why this might be
+lakes_vect <- vect(nas,
+                   geom = c("longitude_lake_centroid",
+                            "latitude_lake_centroid"),
+                   crs = "EPSG:4326")
+
+#let just look at one month quick
+year <- 2024
+month <- 7
+
+url <- paste0(
+  "https://www.ncei.noaa.gov/data/nclimgrid-daily/access/grids/",
+  year,
+  "/ncdd-",
+  year,
+  sprintf("%02d", month),
+  "-grd-scaled.nc"
+)
+
+tmp <- tempfile(fileext = ".nc")
+download.file(url, tmp, mode = "wb")
+
+s <- sds(tmp)
+
+tmax <- s[["tmax"]]
+tmax[[1]]
+
+crs(lakes_vect)
+crs(tmax)
+crds(lakes_vect)
+
+plot(tmax[[1]])
+points(lakes_vect, pch = 16, col = "red")
+
+
+# Minnesota polygon
+plot(
+  tmax[[1]],
+  xlim = c(-97.8, -89.3),
+  ylim = c(43.3, 49.5)
+)
+
+points(lakes_vect, pch = 16, cex = 0.3)
+points(
+  vect(
+    nas,
+    geom = c("longitude_lake_centroid", "latitude_lake_centroid"),
+    crs = "EPSG:4326"
+  ),
+  pch = 16,
+  col = "red",
+  cex = 0.4
+)
+
+plot(
+  tmax[[1]],
+  xlim = c(-92.0, -89.3),
+  ylim = c(47.9, 48.5)
+)
+
+points(lakes_vect, pch = 16, cex = 0.3)
+points(
+  vect(
+    nas,
+    geom = c("longitude_lake_centroid", "latitude_lake_centroid"),
+    crs = "EPSG:4326"
+  ),
+  pch = 16,
+  col = "red",
+  cex = 0.4
+)
+#########stopped here###################
+#there appears to be one point that appears to be in a cell with clim data but comes back NA
+#chat has some code to check if this is just resolution 
+```
+
