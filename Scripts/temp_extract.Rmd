@@ -19,7 +19,7 @@ library(RANN)
 
 # MN Lakes
 ```{r}
-mn_data <- open_dataset(sources = file.path("D:",
+mn_data <- open_dataset(sources = file.path("F:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -307,13 +307,11 @@ check <- open_dataset(file.path("Data",
                                 "nclim_lake_daily"),
                       partitioning = "year") %>% 
   as.tibble()
-check %>% 
-  filter(lake_id == "39000200")
 rm(check)
 
 #########run for all years#####################
 purrr::walk(
-  1951:2025,
+  2024:2025,
   save_year,
   lakes_vect = lakes_vect,
   lake_ids = mn_lakes$lake_id
@@ -374,5 +372,13 @@ clim %>%
   geom_line(alpha = 0.3) +
   labs(title = "Pine Lake 2021-2025")
 #ggsave("one_lake.jpg", height = 5 , width = 5)
+
+#check our weird lakes quick
+clim %>% 
+  filter(lake_id %in% c("48000200", "4003501", "39000200")) %>% 
+  filter(year == 2025) %>% 
+  collect() %>% 
+  ggplot(aes(date, tavg, color = lake_id)) +
+  geom_line(alpha = 0.6) 
 ```
 
