@@ -20,7 +20,7 @@ library(arrow) # reading in climate data
 # Data
 ```{r}
 #reading in parquet files
-clim <- open_dataset(file.path("G:", # you may have to change this to match your local letter for g drive
+clim <- open_dataset(file.path("D:", # you may have to change this to match your local letter for g drive
                                "Shared drives",
                                "Hansen Lab",
                                "MN_Lake_Temp_Data",
@@ -307,5 +307,17 @@ points(
 #########stopped here###################
 #there appears to be one point that appears to be in a cell with clim data but comes back NA
 #chat has some code to check if this is just resolution 
+```
+
+# Check fix 
+```{r}
+clim %>% 
+  filter(lake_id %in% c("48000200", "4003501", "39000200")) %>% 
+  filter(year == 2025) %>% 
+  collect() %>% 
+  ggplot(aes(date, tavg, color = lake_id)) +
+  geom_line(alpha = 0.6) 
+
+#we see mille lacs, red, and low all have data
 ```
 
