@@ -14,7 +14,7 @@ This document demonstrates how to access and use the Minnesota lake climate data
 # Library
 ```{r}
 library(tidyverse) # for normal data stuff
-library(arrow) # reading in climate data
+library(arrow) # reading in climate data 
 ```
 
 # Data
