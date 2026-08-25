@@ -29,7 +29,7 @@ options(brms.backend = "cmdstanr")
 # data
 ```{r}
 #reading in the updated Minnesota data
-mn_data <- open_dataset(sources = file.path("D:",
+mn_data <- open_dataset(sources = file.path("G:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -38,7 +38,7 @@ mn_data <- open_dataset(sources = file.path("D:",
                                             "mn_update")) %>% 
   filter(state == "Minnesota" & !is.na(est_age))
 
-zm_ssw <- read_csv(file.path("D:",
+zm_ssw <- read_csv(file.path("G:",
                              "Shared drives",
                              "Hansen Lab",
                              "RESEARCH PROJECTS",
@@ -71,7 +71,7 @@ zm_ssw <- read_csv(file.path("D:",
          ssw = `starry stonewort`)
 
 #crosswalk - get lat and lon from fish data
-xwalk <- open_dataset(sources = file.path("D:",
+xwalk <- open_dataset(sources = file.path("G:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -609,6 +609,71 @@ age_data_zm %>%
 
 # filter for analysis 
 ```{r}
+#filtering data for Ty's model
+age_data <- mn_data %>% 
+  #filter MN data for fish with alked year level data
+  filter(alk == "year") %>% 
+  filter(species_1 == "walleye") %>% 
+  left_join(zm_ssw, by = "lake_id") %>% 
+  select(lake_id,
+         nhdhr_id,
+         date_total_effort_ident,
+         date_sample,
+         year,
+         latitude_lake_centroid,
+         longitude_lake_centroid,
+         sampling_method,
+         site_id,
+         species_1,
+         length_1,
+         length_unit_1,
+         age,
+         aging_structure_1,
+         sex,
+         est_age,
+         alk,
+         alk_age_str,
+         alk_length,
+         alk_n,
+         weight_1,
+         weight_unit_1,
+         flag,
+         notes_1,
+         zm) %>% 
+  collect() %>% 
+  #only take zebra mussel lakes
+  filter(!is.na(zm)) %>% 
+  #make timing columns
+  mutate(zm_lag = zm+2,
+         birth_year = year - est_age,
+         exposure = case_when(
+           year < zm_lag ~ "before",
+           birth_year >= zm_lag ~ "after",
+           TRUE ~ "drop"
+         )) 
+glimpse(age_data)
+
+valid_lakes <- age_data %>%
+  group_by(lake_id) %>%
+  filter(n_distinct(exposure) %in% c(2,3),
+         "before" %in% exposure) %>% 
+  distinct(lake_id) %>% 
+  pull(lake_id) 
+
+wae_filtered <- age_data %>%
+  filter(lake_id %in% valid_lakes)
+
+wae_filtered %>%
+  distinct(lake_id, exposure) %>%
+  group_by(lake_id) %>%
+  summarise(
+    grouping = paste(sort(exposure), collapse = " + "),
+    .groups = "drop"
+  ) %>%
+  count(grouping, name = "n_lakes")
+write_csv(wae_filtered, "growth_model_wae.csv")
+
+########################################################################
 age_data <- mn_data %>% 
   #filter MN data for fish with alked year level data
   filter(alk == "year") %>% 
