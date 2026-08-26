@@ -64,8 +64,8 @@ min(age_length$n)
 #there are some samples that may be too large at age 1 to be realistic, might need to remove.
 #Need to look into walleye lengths at ages, using the same filter used for Smallmouth Bass
 dat <- dat %>% 
-  filter(!(age==0 & length > 350)) %>% 
-  filter(!(age==1 & length > 400))
+  filter(!(est_age==0 & length > 350)) %>% 
+  filter(!(est_age==1 & length > 400))
 
 #Checking number of samples for each year
 n_by_year <- dat %>% 
@@ -472,33 +472,44 @@ sites <- sort(unique(dat$River))
 as.numeric(as.factor(unique(dat$River)))
 as.numeric(as.factor(sites))
 
+#denver adding a lake look up/cross walk
+lake_lookup <- data.frame(
+  lake = seq_along(sites),
+  River = sites
+)
+
 para.est2 <- para.est2 %>% 
-  mutate(lake = factor(ifelse(lake==1, "01006200", ifelse(lake==2, '01013700', 
-                        ifelse(lake==3, '01015900', ifelse(lake==4, '03057600',
-                        ifelse(lake==5, '04003000', ifelse(lake==6, '04003501',
-                        ifelse(lake==7, '06000200', ifelse(lake==8, '06015200',
-                        ifelse(lake==9, '10005900', ifelse(lake==10, '11005900', 
-                        ifelse(lake==11,'11014700', ifelse(lake==12,'11016700', 
-                        ifelse(lake==13,'11020300', ifelse(lake==14,'11023400',
-                        ifelse(lake==15,'11030500', ifelse(lake==16,'16038400', 
-                        ifelse(lake==17,'18030800', ifelse(lake==18,'18031000', 
-                        ifelse(lake==19,'18037200', ifelse(lake==20,'18037300',
-                        ifelse(lake==21,'25000100', ifelse(lake==22,'27013300',
-                        ifelse(lake==23,'27017600', ifelse(lake==24,'31082600',
-                        ifelse(lake==25,'32006900', ifelse(lake==26,'33002800',
-                        ifelse(lake==27,'34007900', ifelse(lake==28,'37004600',
-                        ifelse(lake==29,'39000200', ifelse(lake==30,'41011000',
-                        ifelse(lake==31,'47004600', ifelse(lake==32,'47004901',
-                        ifelse(lake==33,'51006300', ifelse(lake==34,'53002800',
-                        ifelse(lake==35,'69037300', ifelse(lake==36,'69037800',
-                        ifelse(lake==37,'69049100', ifelse(lake==38,'69061700',
-                        ifelse(lake==39,'69069300', ifelse(lake==40,'69084500',
-                        ifelse(lake==41,'69129100', ifelse(lake==42,'78002500',
-                        ifelse(lake==43,'83003600', ifelse(lake==44,'86029300','87018000'
-                        ))))))))))))))))))))))))))))))))))))))))))))))
+  left_join(lake_lookup) %>% 
+  select(-lake) %>% 
+  rename(lake = River)
+
+# para.est2 <- para.est2 %>% 
+#   mutate(lake = factor(ifelse(lake==1, "01006200", ifelse(lake==2, '01013700', 
+#                         ifelse(lake==3, '01015900', ifelse(lake==4, '03057600',
+#                         ifelse(lake==5, '04003000', ifelse(lake==6, '04003501',
+#                         ifelse(lake==7, '06000200', ifelse(lake==8, '06015200',
+#                         ifelse(lake==9, '10005900', ifelse(lake==10, '11005900', 
+#                         ifelse(lake==11,'11014700', ifelse(lake==12,'11016700', 
+#                         ifelse(lake==13,'11020300', ifelse(lake==14,'11023400',
+#                         ifelse(lake==15,'11030500', ifelse(lake==16,'16038400', 
+#                         ifelse(lake==17,'18030800', ifelse(lake==18,'18031000', 
+#                         ifelse(lake==19,'18037200', ifelse(lake==20,'18037300',
+#                         ifelse(lake==21,'25000100', ifelse(lake==22,'27013300',
+#                         ifelse(lake==23,'27017600', ifelse(lake==24,'31082600',
+#                         ifelse(lake==25,'32006900', ifelse(lake==26,'33002800',
+#                         ifelse(lake==27,'34007900', ifelse(lake==28,'37004600',
+#                         ifelse(lake==29,'39000200', ifelse(lake==30,'41011000',
+#                         ifelse(lake==31,'47004600', ifelse(lake==32,'47004901',
+#                         ifelse(lake==33,'51006300', ifelse(lake==34,'53002800',
+#                         ifelse(lake==35,'69037300', ifelse(lake==36,'69037800',
+#                         ifelse(lake==37,'69049100', ifelse(lake==38,'69061700',
+#                         ifelse(lake==39,'69069300', ifelse(lake==40,'69084500',
+#                         ifelse(lake==41,'69129100', ifelse(lake==42,'78002500',
+#                         ifelse(lake==43,'83003600', ifelse(lake==44,'86029300','87018000'
+#                         ))))))))))))))))))))))))))))))))))))))))))))))
 
 head(para.est2)
-write.csv(para.est2, 'GrowthModel/omega_estimates.csv', row.names = F)
+write.csv(para.est2, 'omega_estimates.csv', row.names = F)
 para.est2 <- read_csv('GrowthModel/omega_estimates.csv')
 
 ggplot() +
@@ -513,7 +524,7 @@ ggplot() +
         axis.title = element_text(size = 11),
         legend.title = element_text(size=11), 
         legend.text=element_text(size=11),strip.text.y = element_text(size=11)) 
-ggsave("Figures/Growth_trends_1.pdf", height = 8, width = 10, units="in")
+ggsave("Growth_trends_1.pdf", height = 8, width = 10, units="in")
 
 #### Adding in lake data and invasion data ####
 dim(para.est2)
@@ -522,7 +533,13 @@ str(para.est2)
 
 dat #Want lat, long, year_infested, invaded, lake_status added to para.est2 
 
-dat3<-dat[,c(1:4,7,10,11)]
+dat3<-dat %>% 
+  select(River,
+         YR,
+         Lat,
+         Long,
+         zm_lag,
+         exposure)
 
 dat3<-dat3%>%distinct(River,YR, .keep_all=TRUE) #this has the years that are actually in the data and not the estimated years that the omegas have
 dat3<-dat3%>%rename(lake=River)
@@ -531,28 +548,116 @@ dat3<-dat3%>%rename(lake=River)
 TEST<-left_join(para.est2,dat3, by=join_by(lake==lake, year==YR))
 head(TEST)
 GM_Omega_Data_FINAL<-TEST
-write_csv(GM_Omega_Data_FINAL,"GrowthModel/GM_Omega_Data_FINAL.csv")
+write_csv(GM_Omega_Data_FINAL,"GM_Omega_Data_FINAL.csv")
 
 #checking the dataframes and making sure they line up 
-GM_Omega_Data_FINAL%>%filter(lake=='01015900')%>%print(n=26)
-dat3%>%filter(lake=='01015900')%>%print(n=26)
+GM_Omega_Data_FINAL%>%filter(lake=='3028700')
+dat3%>%filter(lake=='3028700')
 
-GM_Omega_Data_FINAL%>%filter(lake=='47004600')%>%print(n=26)
-dat3%>%filter(lake=='47004600')%>%print(n=26)
+GM_Omega_Data_FINAL%>%filter(lake=='47004600')
+dat3%>%filter(lake=='47004600')
 
 
-GM_Omega_Data_FINAL%>%filter(lake=='18037300')%>%print(n=26)
-dat3%>%filter(lake=='18037300')%>%print(n=26)
+GM_Omega_Data_FINAL%>%filter(lake=='18037300')
+dat3%>%filter(lake=='18037300')
 
-GM_Omega_Data_FINAL%>%filter(lake=='03057600')%>%print(n=26)
-dat3%>%filter(lake=='03057600')%>%print(n=26)
+GM_Omega_Data_FINAL%>%filter(lake=='3057600')
+dat3%>%filter(lake=='3057600')
 
-#lining up for control?
-GM_Omega_Data_FINAL%>%filter(lake=='01013700')%>%print(n=26)
-dat3%>%filter(lake=='01013700')%>%print(n=26)
+
 
 #Appear to be lining up in the years that we have data and years that we don't having NAs
 
+
+#######################################################
+#Denver looking at omegas quick
+GM_Omega_Data_FINAL %>% 
+  filter(!is.na(exposure)) %>% 
+  ggplot(aes(x = year, y = Omega_HPD)) +
+  geom_errorbar(
+    aes(ymin = lower, ymax = upper),
+    width = 0.2
+  ) +
+  geom_point(aes(color = exposure)) +
+  geom_vline(
+    data = GM_Omega_Data_FINAL %>% 
+      distinct(lake, zm_lag) %>%
+      filter(!is.na(zm_lag)),
+    aes(xintercept = zm_lag),
+    linetype = "dashed"
+  ) +
+  theme(legend.position = "bottom") +
+  facet_wrap(~lake)
+ggsave("omega_exposure.jpg", height = 7, width = 11)
+
+GM_Omega_Data_FINAL %>% 
+  filter(!is.na(exposure)) %>% 
+  ggplot(aes(y = year, x = Omega_HPD)) +
+  geom_errorbar(
+    aes(xmin = lower, xmax = upper),
+    width = 0.2
+  ) +
+  geom_point(aes(color = exposure)) +
+  geom_hline(
+    data = GM_Omega_Data_FINAL %>% 
+      distinct(lake, zm_lag) %>%
+      filter(!is.na(zm_lag)),
+    aes(yintercept = zm_lag),
+    linetype = "dashed"
+  ) +
+  facet_wrap(~lake)
+
+#lets explore that poor convergence
+bad_rhat <- fit$BUGSoutput$summary[
+  fit$BUGSoutput$summary[, "Rhat"] > 1.1,
+  ,
+  drop = FALSE
+]
+
+bad_rhat <- data.frame(
+  parameter = rownames(bad_rhat),
+  bad_rhat,
+  row.names = NULL
+)
+
+bad_rhat <- bad_rhat %>%
+  extract(
+    parameter,
+    into = c("parameter", "year_index", "river_index"),
+    regex = "^([A-Za-z]+)\\[(\\d+),(\\d+)\\]$",
+    convert = TRUE
+  )
+
+bad_rhat <- bad_rhat %>%
+  mutate(
+    YR = sim.yr[year_index],
+    River = sites[river_index]
+  ) %>% 
+  distinct(YR, River, .keep_all = T)
+
+bad_rhat %>% 
+  left_join(dat, by = c("River", "YR")) %>% 
+  filter(!is.na(River)) %>% 
+  ggplot() +
+  geom_point(aes(SiteAge, SiteFishLength)) +
+  facet_wrap(YR~River, scales = "free")
+
+bad_rhat %>% 
+  left_join(dat, by = c("River", "YR")) %>% 
+  filter(!is.na(River)) %>% 
+  group_by(YR, River) %>% 
+  summarise(n = n()) %>% 
+  print(n = nrow(.))
+ggsave("bad_rhats.jpg", height = 7, width = 11)
+
+dat %>% 
+  group_by(YR, River) %>% 
+  count() %>% 
+  ungroup() %>% 
+  summarise(min = min(n),
+            median = median(n),
+            mean = mean(n),
+            max = max(n))
 
 #######################################################
 # River temp data
