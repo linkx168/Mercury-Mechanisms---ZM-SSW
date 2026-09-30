@@ -29,7 +29,7 @@ options(brms.backend = "cmdstanr")
 # data
 ```{r}
 #reading in the updated Minnesota data
-mn_data <- open_dataset(sources = file.path("G:",
+mn_data <- open_dataset(sources = file.path("D:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -38,7 +38,7 @@ mn_data <- open_dataset(sources = file.path("G:",
                                             "mn_update")) %>% 
   filter(state == "Minnesota" & !is.na(est_age))
 
-zm_ssw <- read_csv(file.path("G:",
+zm_ssw <- read_csv(file.path("D:",
                              "Shared drives",
                              "Hansen Lab",
                              "RESEARCH PROJECTS",
@@ -71,7 +71,7 @@ zm_ssw <- read_csv(file.path("G:",
          ssw = `starry stonewort`)
 
 #crosswalk - get lat and lon from fish data
-xwalk <- open_dataset(sources = file.path("G:",
+xwalk <- open_dataset(sources = file.path("D:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",

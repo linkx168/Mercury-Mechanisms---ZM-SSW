@@ -34,6 +34,57 @@ dat <- dat %>%
          'YEAR' = `year`,
          'length' = length_1) %>% 
 mutate(ModelReach = factor(ModelReach))
+
+dat %>% 
+  distinct(alk_age_str)
+
+dat %>% 
+  group_by(ModelReach) %>% 
+  summarise(n_str = n_distinct(alk_age_str)) %>% 
+  summarise(n_lakes_one = sum(n_str == 1),
+            n_lakes_more = sum(n_str > 1))
+
+dat %>%
+  mutate(
+    zm_period = case_when(
+      YEAR < zm_lag ~ "before",
+      YEAR > zm_lag ~ "after",
+      TRUE ~ "at_zm_lag"
+    )
+  ) %>% 
+  filter(zm_period %in% c("before", "after")) %>%
+  group_by(ModelReach, zm_period) %>%
+  summarise(
+    alk_structures = paste(sort(unique(alk_age_str)), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = zm_period,
+    values_from = alk_structures
+  ) %>%
+  mutate(
+    alk_changed = before != after
+  ) %>% 
+  group_by(alk_changed) %>% 
+  count()
+
+dat %>% 
+  filter(ModelReach %in% c("77021500", 
+                           "56014100",
+                           "49007900",
+                           "31053200",
+                           "31065300",
+                           "21012300",
+                           "18030800")) %>% 
+  group_by(ModelReach, exposure) %>% 
+  count()
+  
+dat %>% 
+  filter(ModelReach == "48000200") %>% 
+  group_by(YEAR, exposure) %>% 
+  count() %>% 
+  arrange(YEAR) %>% 
+  print(n = nrow(.))
        
 str(dat)
 
@@ -55,7 +106,7 @@ ggplot(data = n_by_year, mapping = aes(x=YEAR, y=n)) +
   theme(plot.margin = margin(0, .5, .5, .5, "cm")) +
   labs(title="", y="Number of observations", 
        x="Year") 
-# ggsave("figures/abundance_vs_temp.png", height=4, width=8, units="in")
+#ggsave("lake_year_count.jpg", height=7, width=11, units="in")
 dim(dat)
 # Remove unreasonable some length at ages
 
@@ -81,7 +132,7 @@ ggplot(data = dat, mapping = aes(x=est_age, y=length)) +
   theme(plot.margin = margin(0, .5, .5, .5, "cm")) +
   labs(title="", y="Length (mm)", 
        x="Age (yr)") 
-# ggsave("figures/abundance_vs_temp.png", height=4, width=8, units="in")
+# ggsave("age_length.jpg", height=7, width=11, units="in")
 
 
 
@@ -125,11 +176,31 @@ dd.age=dd.age[,c('River','YR','SiteAge','SiteFishLength')]
 head(dd.age)
 
 
+############making a lake-look up table################################
+# Save original lake/river ID
+# Keep the original River ID
+dd.age$River_original <- dd.age$River
+
+# Create the exact same numeric index that the model will use
+river_lookup <- dd.age %>%
+  mutate(
+    River_original = as.numeric(as.character(River)),
+    River_jags = as.numeric(as.factor(River_original))
+  ) %>% 
+  distinct(River_original,
+           River_jags)
+
+dd.age <- dd.age %>% 
+  select(-River_original)
+############################################################
+
+
 #jags need river to be a numeric
 dd.age$River <- as.numeric(as.factor(as.numeric(dd.age$River)))
 unique(dd.age$River) #these need to be consecutive order 
 
 head(dd.age)
+
 
 dim(dd.age)
 summary(dd.age)
@@ -147,6 +218,13 @@ n.simyr=length(sim.yr)
 n.join=2 #num of para modeled jointly as mutivaiable dist
 ww=matrix(c(1,-0.5,-0.5,0.5),nrow=2,ncol=2,byrow=T)
 
+### year lookup
+year_lookup <- data.frame(
+  year_jags = seq_along(sim.yr),
+  year_original = sim.yr
+)
+year_lookup
+#######################
 
 yrlab=dd.age$YR #add a column to label yr in length-age data for model coding
 for(y in 1:length(sim.yr)){
@@ -300,11 +378,19 @@ fit=jags(data=datafit,inits=initial,parameters.to.save=para,model.file=model,
  saveRDS(fit, file='model.rds')
 
 # Read back into R for further processing
-fit <- readRDS(file='model.rds') #test 2 used inital values
+fit <- readRDS(file.path("G:",
+                            "Shared drives",
+                            "Hansen Lab",
+                            "RESEARCH PROJECTS",
+                            "MAISRC Mercury Pathways 53.2",
+                            "Growth Analysis",
+                            "Ty's Model",
+                            "model.rds")) #test 2 used inital values
 
 # ###############assess convergence
 # # Rhat > 1.1
  which(fit$BUGSoutput$summary[, c("Rhat")] > 1.1) 
+ 
 # # 
 # #
 # #
@@ -473,15 +559,11 @@ as.numeric(as.factor(unique(dat$River)))
 as.numeric(as.factor(sites))
 
 #denver adding a lake look up/cross walk
-lake_lookup <- data.frame(
-  lake = seq_along(sites),
-  River = sites
-)
-
 para.est2 <- para.est2 %>% 
-  left_join(lake_lookup) %>% 
+  left_join(river_lookup %>% 
+              rename(lake = River_jags)) %>% 
   select(-lake) %>% 
-  rename(lake = River)
+  rename(lake = River_original)
 
 # para.est2 <- para.est2 %>% 
 #   mutate(lake = factor(ifelse(lake==1, "01006200", ifelse(lake==2, '01013700', 
@@ -510,7 +592,7 @@ para.est2 <- para.est2 %>%
 
 head(para.est2)
 write.csv(para.est2, 'omega_estimates.csv', row.names = F)
-para.est2 <- read_csv('GrowthModel/omega_estimates.csv')
+#para.est2 <- read_csv('GrowthModel/omega_estimates.csv')
 
 ggplot() +
   geom_pointrange(data=para.est2,mapping=aes(x=year, y=Omega_HPD, ymin=lower,ymax=upper),
@@ -524,7 +606,7 @@ ggplot() +
         axis.title = element_text(size = 11),
         legend.title = element_text(size=11), 
         legend.text=element_text(size=11),strip.text.y = element_text(size=11)) 
-ggsave("Growth_trends_1.pdf", height = 8, width = 10, units="in")
+#ggsave("Growth_trends_1.pdf", height = 8, width = 10, units="in")
 
 #### Adding in lake data and invasion data ####
 dim(para.est2)
@@ -541,9 +623,12 @@ dat3<-dat %>%
          zm_lag,
          exposure)
 
+#9/30 NEED TO FIX THIS SO THAT AT RIVER-YR LEVEL EXPOSURE IS DROP IF ANY FISH IS DROP IN THAT YEAR (DISTINCT IS JUST TAKING THE FIRST)
 dat3<-dat3%>%distinct(River,YR, .keep_all=TRUE) #this has the years that are actually in the data and not the estimated years that the omegas have
 dat3<-dat3%>%rename(lake=River)
 
+para.est2 <- para.est2 %>% 
+  mutate(lake = as.factor(lake))
 
 TEST<-left_join(para.est2,dat3, by=join_by(lake==lake, year==YR))
 head(TEST)
@@ -578,7 +663,9 @@ GM_Omega_Data_FINAL %>%
     aes(ymin = lower, ymax = upper),
     width = 0.2
   ) +
-  geom_point(aes(color = exposure)) +
+  geom_point(aes(
+    #color = exposure
+    )) +
   geom_vline(
     data = GM_Omega_Data_FINAL %>% 
       distinct(lake, zm_lag) %>%
@@ -629,10 +716,13 @@ bad_rhat <- bad_rhat %>%
   )
 
 bad_rhat <- bad_rhat %>%
-  mutate(
-    YR = sim.yr[year_index],
-    River = sites[river_index]
-  ) %>% 
+  left_join(river_lookup %>% 
+              rename(river_index = River_jags,
+                     River = River_original)) %>% 
+  left_join(year_lookup %>% 
+              rename(year_index = year_jags,
+                     YR = year_original)) %>% 
+  mutate(River = as.factor(River)) %>% 
   distinct(YR, River, .keep_all = T)
 
 bad_rhat %>% 

@@ -43,7 +43,7 @@ zm_ssw <- read_csv(file.path("D:",
                          TRUE ~ dow))
 
 #mercury data
-hg <- read_csv(file.path("D:",
+hg <- read_csv(file.path("G:",
                              "Shared drives",
                              "Hansen Lab",
                              "RESEARCH PROJECTS",
@@ -848,5 +848,23 @@ koronis %>%
   geom_smooth(aes(LGTHIN, log(HGPPM), color = as.factor(YEARCOLL)), method = "lm") +
   geom_vline(xintercept = 15) +
   geom_hline(yintercept = log(0.22)) 
+```
+
+# quick look at green 
+```{r}
+hg %>% 
+  filter(DOWID == "34-0079-00") %>% 
+  group_by(SPEC, YEARCOLL) %>% 
+  count() %>% 
+  arrange(YEARCOLL) %>% 
+  print(n = nrow(.))
+
+hg %>% 
+  filter(DOWID == "34-0079-00") %>% 
+  filter(SPEC %in% c("YEB", "YEP", "NOP", "WAE")) %>% 
+  ggplot() +
+  geom_smooth(aes(LGTHIN, log(HGPPM), color = SPEC), method = "lm") +
+  geom_point(aes(LGTHIN, log(HGPPM), color = SPEC)) +
+  facet_wrap(~ YEARCOLL)
 ```
 
