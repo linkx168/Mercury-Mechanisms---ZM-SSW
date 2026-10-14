@@ -36,7 +36,9 @@ dat <- dat %>%
 mutate(ModelReach = factor(ModelReach))
 
 dat %>% 
-  distinct(alk_age_str)
+  distinct(alk_age_str, aging_structure_1) %>% 
+  arrange(alk_age_str) %>% 
+  print(n = nrow(.))
 
 dat %>% 
   group_by(ModelReach) %>% 
@@ -45,21 +47,14 @@ dat %>%
             n_lakes_more = sum(n_str > 1))
 
 dat %>%
-  mutate(
-    zm_period = case_when(
-      YEAR < zm_lag ~ "before",
-      YEAR > zm_lag ~ "after",
-      TRUE ~ "at_zm_lag"
-    )
-  ) %>% 
-  filter(zm_period %in% c("before", "after")) %>%
-  group_by(ModelReach, zm_period) %>%
+  filter(period %in% c("before", "after")) %>%
+  group_by(ModelReach, zm_lake, period) %>%
   summarise(
     alk_structures = paste(sort(unique(alk_age_str)), collapse = ", "),
     .groups = "drop"
   ) %>%
   tidyr::pivot_wider(
-    names_from = zm_period,
+    names_from = period,
     values_from = alk_structures
   ) %>%
   mutate(
@@ -78,13 +73,6 @@ dat %>%
                            "18030800")) %>% 
   group_by(ModelReach, exposure) %>% 
   count()
-  
-dat %>% 
-  filter(ModelReach == "48000200") %>% 
-  group_by(YEAR, exposure) %>% 
-  count() %>% 
-  arrange(YEAR) %>% 
-  print(n = nrow(.))
        
 str(dat)
 
