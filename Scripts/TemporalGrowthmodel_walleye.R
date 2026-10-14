@@ -279,7 +279,6 @@ for(r in 1:n.river){
   }
 }
 
-
 ######jags model
 model=function(){
   #growth	
