@@ -24,7 +24,7 @@ dat <- read_csv(file.path("G:",
                           "RESEARCH PROJECTS",
                           "MAISRC Mercury Pathways 53.2",
                           "Data",
-                          "growth_model_wae.csv"))
+                          "wae_growth_zm_data.csv"))
 dim(dat)
 
 dat <- dat %>% 

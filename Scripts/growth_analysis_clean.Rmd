@@ -29,7 +29,7 @@ options(brms.backend = "cmdstanr")
 # data
 ```{r}
 #reading in the updated Minnesota data
-mn_data <- open_dataset(sources = file.path("D:",
+mn_data <- open_dataset(sources = file.path("G:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -37,8 +37,9 @@ mn_data <- open_dataset(sources = file.path("D:",
                                             "Parquet files",
                                             "mn_update")) %>% 
   filter(state == "Minnesota" & !is.na(est_age))
+names(mn_data)
 
-zm_ssw <- read_csv(file.path("D:",
+zm_ssw <- read_csv(file.path("G:",
                              "Shared drives",
                              "Hansen Lab",
                              "RESEARCH PROJECTS",
@@ -71,7 +72,7 @@ zm_ssw <- read_csv(file.path("D:",
          ssw = `starry stonewort`)
 
 #crosswalk - get lat and lon from fish data
-xwalk <- open_dataset(sources = file.path("D:",
+xwalk <- open_dataset(sources = file.path("G:",
                                             "Shared drives",
                                             "Hansen Lab",
                                             "RESEARCH PROJECTS",
@@ -84,7 +85,7 @@ xwalk <- open_dataset(sources = file.path("D:",
   distinct(lake_id, latitude_lake_centroid, longitude_lake_centroid) %>% 
   collect()
 
-gdd <- read_feather(file.path("D:",
+gdd <- read_feather(file.path("G:",
                               "Shared drives",
                               "Hansen Lab",
                               "RESEARCH PROJECTS",
@@ -109,6 +110,427 @@ gdd <- gdd %>%
          gdd_anom = gdd_wtr_5c - lake_avg_gdd) %>% 
   ungroup()
 ```
+
+# Filtering data for Ty's Growth model
+This data does not feed into the modeling attempts below, but creates a data set to run in Ty's script 
+```{r}
+#grab MN updated data 
+mn_data_total <- open_dataset(sources = file.path("G:",
+                                            "Shared drives",
+                                            "Hansen Lab",
+                                            "RESEARCH PROJECTS",
+                                            "Fish Survey Data",
+                                            "Parquet files",
+                                            "mn_update")) 
+
+#filtering data for Ty's model
+#let's make sure we retain uninvaded systems 
+#we also want to retain aged fish that did not make the cut for the HALK
+mn_data_filtered <- mn_data_total %>% 
+  select(state,
+         lake_id,
+         lake_name,
+         nhdhr_id,
+         total_effort_ident,
+         date_total_effort_ident,
+         date_sample,
+         year,
+         latitude_lake_centroid,
+         longitude_lake_centroid,
+         sampling_method,
+         site_id,
+         species_1,
+         length_1,
+         length_unit_1,
+         age,
+         aging_structure_1,
+         sex,
+         est_age,
+         alk,
+         alk_age_str,
+         alk_length,
+         alk_n,
+         weight_1,
+         weight_unit_1,
+         flag,
+         notes_1) %>%
+  filter(state == "Minnesota") %>% 
+  filter(!is.na(total_effort_ident)) %>% 
+  group_by(total_effort_ident, species_1) %>% 
+  mutate(n_fish = n(),
+         n_aged = sum(!is.na(age))) %>%
+  ungroup() %>% 
+  mutate(keep = case_when(n_fish == n_aged ~ "y",
+                          alk == "year" ~ "y",
+                          TRUE ~ "n")) %>% 
+  filter(keep == "y") %>% 
+  collect() %>% 
+  as_tibble()
+glimpse(mn_data_filtered)
+#sweet, we now have fish wtih a lake-year alk OR all fish from a species in a survey were aged...
+#this certainly includes some lake-years with a really small number of fish (like maybe they got 1 walleye and aged it)
+
+#lets bring in the AIS data now
+zm_ssw <- read_csv(file.path("G:",
+                             "Shared drives",
+                             "Hansen Lab",
+                             "RESEARCH PROJECTS",
+                             "MAISRC Mercury Pathways 53.2",
+                             "Data",
+                             "zm_ssw_6jan2026.csv")) %>% 
+  #filter out na dows or those "none"
+  filter(!is.na(dow) & !(str_detect(dow, "n"))) %>% 
+  #generate original id for reference
+  mutate(original_id = dow) %>% 
+  #remove dashes
+  #make sure short dows are 8 digits
+  #fix a few manually
+  #remove leading 0s to match the fish data
+  mutate(dow = str_replace_all(dow, pattern = "-", ""),
+         dow = if_else(nchar(dow) == 6, paste0(dow, "00"), dow),
+         dow = case_when(dow == "10179" ~ "01017900",
+                         str_detect(dow, "040063") ~ "04006300",
+                         TRUE ~ dow),
+         dow = case_when(str_starts(dow, "0") ~ str_sub(dow, 2),
+                         TRUE ~ dow))  %>% 
+  #rename dow to match fishereis column
+  rename(lake_id = dow) %>% 
+  #pivot to lake per row, with zm and starry columns 
+  pivot_wider(id_cols = c(lake_id, lake_name),
+              names_from = ais,
+              values_from = year_infested,
+              values_fn = min) %>% 
+  rename(zm = `zebra mussel`,
+         ssw = `starry stonewort`)
+#fixing a wonky name - one dow with two names that I am throwing out for now
+zm_ssw <- zm_ssw %>% 
+  filter(lake_name != "Wolf (Big Wolf)") %>% 
+  filter(!(lake_id == "18031100" & lake_name == "Rush")) %>% 
+  select(lake_id, ssw, zm)
+
+mn_data_filtered <- mn_data_filtered %>% 
+  #create a shared age column for both alk fish and aged fish
+  mutate(age_clean = case_when(alk == "year" ~ est_age,
+                         TRUE ~ age)) %>% 
+  left_join(zm_ssw, by = "lake_id", relationship = "many-to-one") %>% 
+  mutate(birth_year = year - age,
+         zm_lake = case_when(is.na(zm) ~ "uninvaded",
+                             !is.na(zm) ~ "ZM"),
+         exposure = case_when(
+           year < zm ~ "before",
+           birth_year >= zm ~ "after",
+           TRUE ~ "overlap"
+         ))  
+glimpse(mn_data_filtered)
+
+mn_data_filtered %>% 
+  group_by(zm_lake) %>% 
+  summarise(n_lakes = n_distinct(lake_id),
+            n_years = n_distinct(year),
+            n_lake_years = n_distinct(lake_id, year),
+            min_year = min(year),
+            max_year = max(year),
+            n_fish = n())
+
+glimpse(mn_data_filtered)
+##########################################################
+
+  ref_map <- ref_eligible %>%
+    mutate(
+      matched_index = match(nearest_zm_id, zm_eligible$lake_id)
+    )
+
+  line_geometry <- st_nearest_points(
+    ref_map,
+    zm_eligible[ref_map$matched_index, ],
+    pairwise = TRUE
+  )
+
+  connections <- st_sf(
+    ref_map %>%
+      st_drop_geometry() %>%
+      select(lake_id, nearest_zm_id, pseudo_zm_year,
+             nearest_zm_distance_km),
+    geometry = line_geometry
+  )
+
+  list(
+    data = species_data,
+    invaded_lakes = zm_eligible,
+    reference_lakes = ref_eligible,
+    connections = connections
+  )
+
+
+
+create_midfish_species <- function(species, data) {
+
+  # --------------------------------------------------
+  # 1. Get fish records for this species
+  # --------------------------------------------------
+
+  fish <- data %>%
+    filter(
+      species_1 == species,
+      !is.na(lake_id),
+      !is.na(year)
+    )
+
+  # One row per lake, with its status, invasion year,
+  # coordinates, and species-specific sampling years
+  lake_summary <- fish %>%
+    group_by(lake_id) %>%
+    summarise(
+      lake_name = first(
+        lake_name[!is.na(lake_name)],
+        default = NA_character_
+      ),
+      zm_lake = first(
+        zm_lake[!is.na(zm_lake)],
+        default = NA_character_
+      ),
+      zm_year = first(
+        zm[!is.na(zm)],
+        default = NA_real_
+      ),
+      longitude = first(
+        longitude_lake_centroid[!is.na(longitude_lake_centroid)],
+        default = NA_real_
+      ),
+      latitude = first(
+        latitude_lake_centroid[!is.na(latitude_lake_centroid)],
+        default = NA_real_
+      ),
+      has_pre_observed = any(year < zm_year, na.rm = TRUE),
+      has_post_observed = any(year >= zm_year, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # --------------------------------------------------
+  # 2. Find invaded lakes with species samples
+  #    before AND after observed invasion
+  # --------------------------------------------------
+
+  zm_lakes <- lake_summary %>%
+    filter(
+      zm_lake == "ZM",
+      !is.na(zm_year),
+      !is.na(longitude),
+      !is.na(latitude),
+      has_pre_observed,
+      has_post_observed
+    )
+
+  if (nrow(zm_lakes) == 0) {
+    message("Skipping ", species, ": no eligible invaded lakes.")
+    return(NULL)
+  }
+
+  # --------------------------------------------------
+  # 3. Identify uninvaded lakes and match them
+  #    to their nearest eligible invaded lake
+  # --------------------------------------------------
+
+  ref_lakes <- lake_summary %>%
+    filter(
+      zm_lake == "uninvaded",
+      !is.na(longitude),
+      !is.na(latitude)
+    )
+
+  if (nrow(ref_lakes) == 0) {
+    message("Skipping ", species, ": no reference lakes.")
+    return(NULL)
+  }
+
+  zm_sf <- st_as_sf(
+    zm_lakes,
+    coords = c("longitude", "latitude"),
+    crs = 4326,
+    remove = FALSE
+  ) %>%
+    st_transform(26915)
+
+  ref_sf <- st_as_sf(
+    ref_lakes,
+    coords = c("longitude", "latitude"),
+    crs = 4326,
+    remove = FALSE
+  ) %>%
+    st_transform(26915)
+
+  nearest_idx <- st_nearest_feature(ref_sf, zm_sf)
+
+  ref_sf <- ref_sf %>%
+    mutate(
+      nearest_zm_id = zm_sf$lake_id[nearest_idx],
+      nearest_zm_name = zm_sf$lake_name[nearest_idx],
+      pseudo_zm_year = zm_sf$zm_year[nearest_idx],
+      nearest_zm_distance_km = as.numeric(
+        st_distance(
+          ref_sf,
+          zm_sf[nearest_idx, ],
+          by_element = TRUE
+        )
+      ) / 1000
+    )
+
+  # --------------------------------------------------
+  # 4. Check sampling coverage using lake-year records
+  # --------------------------------------------------
+
+  ref_years <- fish %>%
+    distinct(lake_id, year) %>%
+    inner_join(
+      ref_sf %>%
+        st_drop_geometry() %>%
+        select(lake_id, pseudo_zm_year),
+      by = "lake_id"
+    ) %>%
+    group_by(lake_id, pseudo_zm_year) %>%
+    summarise(
+      has_pre_pseudo = any(year < pseudo_zm_year),
+      has_post_pseudo = any(year >= pseudo_zm_year),
+      .groups = "drop"
+    )
+
+  eligible_ref <- ref_sf %>%
+    left_join(
+      ref_years,
+      by = c("lake_id", "pseudo_zm_year")
+    ) %>%
+    filter(has_pre_pseudo, has_post_pseudo)
+
+  # --------------------------------------------------
+  # 5. Combine eligible invaded and reference lakes
+  # --------------------------------------------------
+
+  zm_eligible <- zm_sf %>%
+    mutate(
+      assigned_zm_year = zm_year,
+      invasion_year_source = "observed",
+      nearest_zm_id = lake_id,
+      nearest_zm_distance_km = 0
+    )
+
+  ref_eligible <- eligible_ref %>%
+    mutate(
+      assigned_zm_year = pseudo_zm_year,
+      invasion_year_source = "pseudo"
+    )
+
+  lake_assignments <- bind_rows(zm_eligible, ref_eligible)
+
+  # Retain all fish records for eligible lakes
+  species_data <- fish %>%
+    inner_join(
+      lake_assignments %>%
+        st_drop_geometry() %>%
+        select(
+          lake_id, assigned_zm_year, invasion_year_source,
+          nearest_zm_id, nearest_zm_distance_km
+        ),
+      by = "lake_id"
+    ) %>%
+    mutate(
+      period = if_else(
+        year < assigned_zm_year,
+        "before",
+        "after"
+      )
+    )
+
+  # --------------------------------------------------
+  # 6. Build connection lines for mapping
+  # --------------------------------------------------
+
+  ref_map <- ref_eligible %>%
+    mutate(
+      matched_index = match(nearest_zm_id, zm_eligible$lake_id)
+    )
+
+  line_geometry <- st_nearest_points(
+    ref_map,
+    zm_eligible[ref_map$matched_index, ],
+    pairwise = TRUE
+  )
+
+  connections <- st_sf(
+    ref_map %>%
+      st_drop_geometry() %>%
+      select(lake_id, nearest_zm_id, pseudo_zm_year,
+             nearest_zm_distance_km),
+    geometry = line_geometry
+  )
+
+  list(
+    data = species_data,
+    invaded_lakes = zm_eligible,
+    reference_lakes = ref_eligible,
+    connections = connections
+  )
+}
+
+
+##############################################################
+
+#run it!
+wae_results <- create_midfish_species(
+  species = "walleye",
+  data = mn_data_filtered
+)
+wae_data <- wae_results$data
+
+wae_data %>% 
+  group_by(zm_lake) %>% 
+  summarise(n_lakes = n_distinct(lake_id))
+
+wae_data %>% 
+  group_by(lake_id, zm_lake, period) %>% 
+  summarise(n_fish = n()) %>% 
+  group_by(zm_lake, period) %>% 
+  summarise(mean = mean(n_fish),
+            min = min(n_fish),
+            max = max(n_fish))
+
+ggplot() +
+  geom_sf(
+    data = wae_results$connections,
+    aes(color = "Connections"),
+    linetype = "dashed",
+    linewidth = 0.5
+  ) +
+  geom_sf(
+    data = wae_results$reference_lakes,
+    aes(color = "Uninvaded lakes"),
+    size = 2
+  ) +
+  geom_sf(
+    data = wae_results$invaded_lakes,
+    aes(color = "Invaded lakes"),
+    size = 2,
+    shape = 17
+  ) +
+  scale_color_manual(
+    values = c(
+      "Uninvaded lakes" = "steelblue",
+      "Invaded lakes" = "firebrick",
+      "Connections" = "grey40"
+    )
+  ) +
+  labs(
+    title = "Species-specific ZM lake matching",
+    subtitle = "uninvaded lakes assigned the year of their nearest eligible invaded lake",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+write_csv(wae_data, "wae_growth_zm_data.csv")
+```
+
+
+
 
 # Inventory of sample size with varying filtering
 ```{r}
@@ -609,69 +1031,7 @@ age_data_zm %>%
 
 # filter for analysis 
 ```{r}
-#filtering data for Ty's model
-age_data <- mn_data %>% 
-  #filter MN data for fish with alked year level data
-  filter(alk == "year") %>% 
-  filter(species_1 == "walleye") %>% 
-  left_join(zm_ssw, by = "lake_id") %>% 
-  select(lake_id,
-         nhdhr_id,
-         date_total_effort_ident,
-         date_sample,
-         year,
-         latitude_lake_centroid,
-         longitude_lake_centroid,
-         sampling_method,
-         site_id,
-         species_1,
-         length_1,
-         length_unit_1,
-         age,
-         aging_structure_1,
-         sex,
-         est_age,
-         alk,
-         alk_age_str,
-         alk_length,
-         alk_n,
-         weight_1,
-         weight_unit_1,
-         flag,
-         notes_1,
-         zm) %>% 
-  collect() %>% 
-  #only take zebra mussel lakes
-  filter(!is.na(zm)) %>% 
-  #make timing columns
-  mutate(zm_lag = zm+2,
-         birth_year = year - est_age,
-         exposure = case_when(
-           year < zm_lag ~ "before",
-           birth_year >= zm_lag ~ "after",
-           TRUE ~ "drop"
-         )) 
-glimpse(age_data)
 
-valid_lakes <- age_data %>%
-  group_by(lake_id) %>%
-  filter(n_distinct(exposure) %in% c(2,3),
-         "before" %in% exposure) %>% 
-  distinct(lake_id) %>% 
-  pull(lake_id) 
-
-wae_filtered <- age_data %>%
-  filter(lake_id %in% valid_lakes)
-
-wae_filtered %>%
-  distinct(lake_id, exposure) %>%
-  group_by(lake_id) %>%
-  summarise(
-    grouping = paste(sort(exposure), collapse = " + "),
-    .groups = "drop"
-  ) %>%
-  count(grouping, name = "n_lakes")
-write_csv(wae_filtered, "growth_model_wae.csv")
 
 ########################################################################
 age_data <- mn_data %>% 
