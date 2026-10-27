@@ -73,6 +73,14 @@ dat %>%
                            "18030800")) %>% 
   group_by(ModelReach, exposure) %>% 
   count()
+
+dat %>% 
+  group_by(ModelReach, YEAR) %>% 
+  summarise(n_fish = n()) %>% 
+  group_by(YEAR) %>% 
+  summarise(n_lakes = n_distinct(ModelReach),
+            avg_fish_per_lake = mean(n_fish)) %>% 
+  print(n = nrow(.))
        
 str(dat)
 
@@ -86,19 +94,19 @@ n_by_year <- dat %>%
 summary(n_by_year$n)
 
 # Plot n by year and site
-ggplot(data = n_by_year, mapping = aes(x=YEAR, y=n)) + 
-  facet_wrap(~ModelReach) +
-  geom_point() + 
-  theme(axis.text = element_text(size = 13),
-        axis.title = element_text(size = 13)) +
-  theme(plot.margin = margin(0, .5, .5, .5, "cm")) +
-  labs(title="", y="Number of observations", 
-       x="Year") 
+# ggplot(data = n_by_year, mapping = aes(x=YEAR, y=n)) + 
+#   facet_wrap(~ModelReach) +
+#   geom_point() + 
+#   theme(axis.text = element_text(size = 13),
+#         axis.title = element_text(size = 13)) +
+#   theme(plot.margin = margin(0, .5, .5, .5, "cm")) +
+#   labs(title="", y="Number of observations", 
+#        x="Year") 
 #ggsave("lake_year_count.jpg", height=7, width=11, units="in")
 dim(dat)
 # Remove unreasonable some length at ages
 
-age_length<-dat%>%count(est_age, length, sort=TRUE)
+age_length<-dat%>%count(age_clean, length, sort=TRUE)
 min(age_length$n)
 #there are some samples that may be too large at age 1 to be realistic, might need to remove.
 #Need to look into walleye lengths at ages, using the same filter used for Smallmouth Bass
@@ -112,14 +120,14 @@ n_by_year <- dat %>%
 summary(n_by_year$n) #still more than 20 for each 
 
 # Length at age across all years by site
-ggplot(data = dat, mapping = aes(x=est_age, y=length)) + 
-  facet_wrap(~ModelReach) +
-  geom_point() + 
-  theme(axis.text = element_text(size = 13),
-        axis.title = element_text(size = 13)) +
-  theme(plot.margin = margin(0, .5, .5, .5, "cm")) +
-  labs(title="", y="Length (mm)", 
-       x="Age (yr)") 
+# ggplot(data = dat, mapping = aes(x=est_age, y=length)) + 
+#   facet_wrap(~ModelReach) +
+#   geom_point() + 
+#   theme(axis.text = element_text(size = 13),
+#         axis.title = element_text(size = 13)) +
+#   theme(plot.margin = margin(0, .5, .5, .5, "cm")) +
+#   labs(title="", y="Length (mm)", 
+#        x="Age (yr)") 
 # ggsave("age_length.jpg", height=7, width=11, units="in")
 
 
@@ -144,7 +152,7 @@ ggplot(data = dat, mapping = aes(x=est_age, y=length)) +
 #write.csv(dat, file = "10yearsRiverNo.csv")
 
 # Rename coumns to match model code
-setnames(dat, old=c("ModelReach","YEAR", "est_age", "length"), new=c("River","YR", "SiteAge" ,"SiteFishLength"))
+setnames(dat, old=c("ModelReach","YEAR", "age_clean", "length"), new=c("River","YR", "SiteAge" ,"SiteFishLength"))
 head(dat)
 
 # # Select reaches of interest
@@ -198,6 +206,10 @@ dim(dd.age)
 #order years
 dd.age <- dd.age[order(dd.age$YR),]
 
+dd.age %>% 
+  ggplot() +
+  geom_point(aes(SiteAge, SiteFishLength)) +
+  facet_wrap(~YR)
 ###fixed life history and popn parameters
 sim.yr=min(dd.age$YR):max(dd.age$YR)
 n.river=length(unique(dd.age$River))
@@ -355,14 +367,11 @@ initial=list(list('Linfbar'=800,'kbar'=0.2,'t0bar'=-1.4),
              list('Linfbar'=825,'kbar'=0.2,'t0bar'=-1.5),
              list('Linfbar'=815,'kbar'=0.15,'t0bar'=-1.6))
 
-
-
 fit=jags(data=datafit,inits=initial,parameters.to.save=para,model.file=model,
          n.chains=3,n.iter=100000,n.burnin=50000,n.thin=10,DIC=T)
 
-
 #save fit as rds file-
- saveRDS(fit, file='model.rds')
+saveRDS(fit, file='model.rds')
 
 # Read back into R for further processing
 fit <- readRDS(file.path("G:",
@@ -372,7 +381,7 @@ fit <- readRDS(file.path("G:",
                             "MAISRC Mercury Pathways 53.2",
                             "Growth Analysis",
                             "Ty's Model",
-                            "model.rds")) #test 2 used inital values
+                            "model.rds"))
 
 # ###############assess convergence
 # # Rhat > 1.1
@@ -607,8 +616,9 @@ dat3<-dat %>%
          YR,
          Lat,
          Long,
-         zm_lag,
-         exposure)
+         assigned_zm_year,
+         zm_lake,
+         period)
 
 #9/30 NEED TO FIX THIS SO THAT AT RIVER-YR LEVEL EXPOSURE IS DROP IF ANY FISH IS DROP IN THAT YEAR (DISTINCT IS JUST TAKING THE FIRST)
 dat3<-dat3%>%distinct(River,YR, .keep_all=TRUE) #this has the years that are actually in the data and not the estimated years that the omegas have
@@ -629,10 +639,6 @@ dat3%>%filter(lake=='3028700')
 GM_Omega_Data_FINAL%>%filter(lake=='47004600')
 dat3%>%filter(lake=='47004600')
 
-
-GM_Omega_Data_FINAL%>%filter(lake=='18037300')
-dat3%>%filter(lake=='18037300')
-
 GM_Omega_Data_FINAL%>%filter(lake=='3057600')
 dat3%>%filter(lake=='3057600')
 
@@ -640,6 +646,10 @@ dat3%>%filter(lake=='3057600')
 
 #Appear to be lining up in the years that we have data and years that we don't having NAs
 
+dat %>% 
+  filter(River =='3057600') %>% 
+  distinct(River, YR, period)
+#we can see here that the distinct call makes the overlap and after bounds a bit funky (just takes the first call and the first varies between years within a lake)
 
 #######################################################
 #Denver looking at omegas quick
@@ -655,9 +665,8 @@ GM_Omega_Data_FINAL %>%
     )) +
   geom_vline(
     data = GM_Omega_Data_FINAL %>% 
-      distinct(lake, zm_lag) %>%
-      filter(!is.na(zm_lag)),
-    aes(xintercept = zm_lag),
+      distinct(lake, assigned_zm_year),
+    aes(xintercept = assigned_zm_year),
     linetype = "dashed"
   ) +
   theme(legend.position = "bottom") +
@@ -674,12 +683,379 @@ GM_Omega_Data_FINAL %>%
   geom_point(aes(color = exposure)) +
   geom_hline(
     data = GM_Omega_Data_FINAL %>% 
-      distinct(lake, zm_lag) %>%
-      filter(!is.na(zm_lag)),
-    aes(yintercept = zm_lag),
+      distinct(lake, assigned_zm_year) %>%
+      filter(!is.na(assigned_zm_year)),
+    aes(yintercept = assigned_zm_year),
     linetype = "dashed"
   ) +
   facet_wrap(~lake)
+
+#############################################################################
+#lets try to fit a post-hoc model directly to the postiror draws
+#create some memory
+rm(fit)
+#first build an omega dataset for every posterior draw
+# Extract Linf and K column names
+linf_cols <- grep("^Linf[0-9]+_[0-9]{4}$",
+                  names(dat.out), value = TRUE)
+
+k_cols <- grep("^K[0-9]+_[0-9]{4}$",
+               names(dat.out), value = TRUE)
+
+# Confirm the number of columns matches
+length(linf_cols)
+length(k_cols)
+
+# Create a lookup table from Linf column names
+omega_lookup <- tibble(
+  Linf_col = linf_cols
+) %>%
+  mutate(
+    lake_index = as.integer(str_extract(Linf_col, "(?<=Linf)[0-9]+")),
+    year = as.integer(str_extract(Linf_col, "[0-9]{4}$")),
+    K_col = paste0("K", lake_index, "_", year)
+  )
+
+# Check every matching K column exists
+stopifnot(all(omega_lookup$K_col %in% names(dat.out)))
+
+# Calculate omega for every posterior draw and lake-year
+omega_draws <- as.data.frame(
+  Map(
+    function(linf_col, k_col) {
+      dat.out[[linf_col]] * dat.out[[k_col]]
+    },
+    omega_lookup$Linf_col,
+    omega_lookup$K_col
+  )
+)
+
+names(omega_draws) <- paste0(
+  "lake", omega_lookup$lake_index, "_", omega_lookup$year
+)
+
+# Convert to long format
+omega_draws_long <- omega_draws %>%
+  mutate(draw = row_number()) %>%
+  pivot_longer(
+    cols = -draw,
+    names_to = "lake_year",
+    values_to = "omega"
+  ) %>%
+  extract(
+    lake_year,
+    into = c("lake_index", "year"),
+    regex = "^lake([0-9]+)_([0-9]{4})$",
+    convert = TRUE
+  ) %>% 
+  left_join(river_lookup %>% 
+              rename(lake_index = River_jags)) %>% 
+  select(-lake_index) %>% 
+  rename(lake = River_original)
+glimpse(omega_draws_long)
+
+n_distinct(omega_draws_long$draw)
+n_distinct(omega_draws_long$lake_index)
+n_distinct(omega_draws_long$year)
+range(omega_draws_long$year)
+
+#double check that we rearranged correctly 
+omega_draws_long %>% 
+  filter(lake == '3057600') %>% 
+  group_by(lake, year) %>% 
+  summarise(median_omega = median(omega),
+            low = quantile(omega, probs = 0.025),
+            high = quantile(omega, probs = 0.975),
+            sd_long = sd(omega)) %>% 
+  mutate(lake = as.factor(lake)) %>% 
+  left_join(GM_Omega_Data_FINAL) %>% 
+  filter(!is.na(Lat)) %>% 
+  select(lake, year, low, lower, median_omega, Omega_HPD, high, upper, sd_long, sd)
+#sweet, we can see here that we grabbed the same draws as the summary above, how lets get to some post-hoc modeling
+
+#lets again clean up some things in environment (this was a quick look - not really methodological)
+rm(dat2, initial, Ks, Linfs, omega_draws, omega_lookup)
+
+# post-hoc modeling
+lake_meta <- GM_Omega_Data_FINAL %>%
+  distinct(lake, year, zm_lake, assigned_zm_year, period)
+
+omega_draws_long <- omega_draws_long %>% 
+  mutate(lake = as.factor(lake)) %>% 
+  left_join(lake_meta, by = c("lake", "year")) %>% 
+  filter(!is.na(zm_lake)) %>% 
+  mutate(time_relative = year - assigned_zm_year)
+#here we are only taking observed lake years where before draws were for all combinations of lake-years
+#812 obs lake-years x 15000 draws = 12180000
+
+omega_draws_long %>% 
+  summarise(
+  n_rows = n(),
+  n_lakes = n_distinct(lake),,
+  n_lake_years = n_distinct(lake,year),
+  n_draws = n_distinct(draw),
+  na_lake_info = sum(is.na(zm_lake))
+)
+
+# create some more room for modeling (targeting the big objects)
+rm(omegas, output, output.array)
+
+glimpse(omega_draws_long)
+omega_draws_long <- omega_draws_long %>% 
+  mutate(year = factor(year))
+
+#set the seed
+set.seed(10)
+
+# Randomly sample 200 distinct first-stage posterior draws
+available_draws <- sort(unique(omega_draws_long$draw))
+
+sampled_draws <- sample(
+  available_draws,
+  size = min(200, length(available_draws))
+)
+length(sampled_draws)
+
+# For the first test, use 3; change to 200 for the full run
+library(brms)
+library(emmeans)
+library(tidybayes)
+
+set.seed(10)
+
+n_draws <- 200
+
+sampled_draws <- sample(
+  unique(omega_draws_long$draw),
+  size = min(n_draws, n_distinct(omega_draws_long$draw))
+)
+
+output_dir <- "omega_emmeans_fits"
+dir.create(output_dir, showWarnings = FALSE)
+
+all_contrasts <- vector("list", length(sampled_draws))
+fit_status <- vector("list", length(sampled_draws))
+
+for (i in seq_along(sampled_draws)) {
+  
+  d <- sampled_draws[i]
+  
+  message("Model ", i, " of ", length(sampled_draws),
+          " | first-stage draw: ", d)
+  
+  data_trial <- omega_draws_long %>%
+    filter(draw == d) %>%
+    select(omega, zm_lake, period, lake, year) %>%
+    mutate(
+      lake = factor(lake),
+      year = factor(year),
+      zm_lake = factor(zm_lake),
+      period = factor(period, levels = c("before", "after"))
+    ) %>%
+    droplevels()
+  
+  result <- tryCatch({
+    
+    fit_i <- brm(
+      omega ~ zm_lake * period +
+        (1 | lake) + (1 | year),
+      data = data_trial,
+      family = gaussian(),
+      chains = 3,
+      iter = 2000,
+      warmup = 500,
+      cores = 2,
+      seed = 1000 + i,
+      refresh = 0
+    )
+    
+    # Save each fitted model
+    saveRDS(
+      fit_i,
+      file = file.path(output_dir, paste0("fit_draw_", d, ".rds"))
+    )
+    
+    # Population-level estimated means for each group and period
+    emm <- emmeans(
+      fit_i,
+      ~ zm_lake * period,
+      re_formula = NA,
+      epred = TRUE
+    ) %>%
+      gather_emmeans_draws() %>%
+      select(.draw, zm_lake, period, .value)
+    
+    # One row per posterior draw, with four predicted means
+    means_wide <- emm %>%
+      pivot_wider(
+        names_from = c(zm_lake, period),
+        values_from = .value,
+        names_glue = "{zm_lake}_{period}"
+      )
+    
+    # Calculate contrasts within each posterior draw
+    contrasts_i <- means_wide %>%
+      mutate(
+        first_stage_draw = d,
+        diff_un = uninvaded_after - uninvaded_before,
+        diff_zm = ZM_after - ZM_before,
+        diff_of_diff = diff_zm - diff_un
+      )
+    
+    list(
+      contrasts = contrasts_i,
+      status = data.frame(
+        first_stage_draw = d,
+        success = TRUE,
+        message = NA_character_
+      )
+    )
+    
+  }, error = function(e) {
+    
+    list(
+      contrasts = NULL,
+      status = data.frame(
+        first_stage_draw = d,
+        success = FALSE,
+        message = conditionMessage(e)
+      )
+    )
+  })
+  
+  all_contrasts[[i]] <- result$contrasts
+  fit_status[[i]] <- result$status
+  
+  # Save progress after every model
+  saveRDS(
+    bind_rows(all_contrasts),
+    file = file.path(output_dir, "contrasts_progress.rds")
+  )
+}
+
+# Combine results
+all_contrasts <- bind_rows(all_contrasts)
+fit_status <- bind_rows(fit_status)
+
+saveRDS(all_contrasts, file.path(output_dir, "all_contrasts.rds"))
+write.csv(fit_status, file.path(output_dir, "fit_status.csv"),
+          row.names = FALSE)
+
+table(fit_status$success)
+#sweet, they all fit. Lets use the output
+
+lake_meta %>% 
+  filter(!is.na(zm_lake)) %>% 
+  distinct(lake, zm_lake) %>% 
+  group_by(zm_lake) %>% 
+  count()
+
+#find the median values of every "first_stage_draw
+post_hoc_sum <- all_contrasts %>% 
+  group_by(first_stage_draw) %>% 
+  median_qi()
+glimpse(post_hoc_sum)
+
+post_hoc_sum %>% 
+  mutate(pct_change_n = (uninvaded_after - uninvaded_before)/uninvaded_before *100,
+         pct_change_y = (ZM_after - ZM_before)/ZM_before*100) %>% 
+  summarise(avg_nn = median(uninvaded_before),
+            avg_ny = median(uninvaded_after),
+            avg_yn = median(ZM_before),
+            avg_yy = median(ZM_after),
+            
+            avg_diff_n = median(diff_un),
+            avg_diff_zm = median(diff_zm),
+            
+            avg_diff_of_diff = median(diff_of_diff),
+            
+            pct_change_n = median(pct_change_n),
+            pact_change_y = median(pct_change_y))
+
+post_hoc_sum %>%
+  summarise(
+    n_draws = n(),
+    pct_below_zero = mean(diff_of_diff <= 0, na.rm = TRUE) * 100,
+  )
+
+post_hoc_sum %>% 
+  ggplot()+
+  geom_density(aes(x = diff_of_diff)) +
+  geom_vline(xintercept = c(0))
+ggsave("post_hoc_diff_of_diff.jpg")
+
+median_lines_plot <- post_hoc_sum %>%
+  select(first_stage_draw,
+         uninvaded_before,
+         uninvaded_after,
+         ZM_before,
+         ZM_after) %>% 
+  pivot_longer(cols = c("uninvaded_before",
+                        "uninvaded_after",
+                        "ZM_before",
+                        "ZM_after"), 
+               names_to = "interaction",
+               values_to = "omega") %>%
+  mutate(zm_lake = case_when(str_detect(interaction, "uninvaded") ~ "Uninvaded",
+                             TRUE ~ "ZM"),
+         zm_sample = case_when(str_detect(interaction, "before") ~ "Before",
+                               TRUE ~ "After"),
+         zm_sample = as.factor(zm_sample),
+         factor(zm_sample, levels = c("Before", "After"))) %>% 
+  group_by(zm_lake, zm_sample) %>% 
+  summarize(median_omega = median(omega), .groups = "drop") 
+
+post_hoc_sum %>% 
+  select(first_stage_draw,
+         uninvaded_before,
+         uninvaded_after,
+         ZM_before,
+         ZM_after) %>% 
+  pivot_longer(cols = c("uninvaded_before",
+                        "uninvaded_after",
+                        "ZM_before",
+                        "ZM_after"), 
+               names_to = "interaction",
+               values_to = "omega") %>%
+  mutate(zm_lake = case_when(str_detect(interaction, "uninvaded") ~ "Uninvaded",
+                             TRUE ~ "ZM"),
+         zm_sample = case_when(str_detect(interaction, "before") ~ "Before",
+                               TRUE ~ "After"),
+         zm_sample = as.factor(zm_sample),
+         zm_sample = factor(zm_sample, levels = c("Before", "After"))) %>% 
+  ggplot(aes(x = zm_sample, y = omega, color = zm_lake, shape = zm_lake)) +
+  stat_pointinterval(
+    .width = c(.66, .95),
+    show.legend = F,
+    position = position_dodge(width = 0.2)
+  )  +
+  scale_shape_manual("Sample Invasion",
+                     values = c(17, 16)) +
+  geom_line(
+    data = median_lines_plot,
+    aes(x = zm_sample, y = median_omega, group = zm_lake),
+    position = position_dodge(width = 0.1), # Align lines with intervals
+    inherit.aes = FALSE,
+    key_glyph = "rect",
+    #color = c("lightblue", "lightblue", "salmon", "salmon")
+  ) +
+  ylab("Omega") +
+  xlab("") +
+  scale_color_manual("Lake Invasion", 
+                     values = c("lightblue", "salmon")) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.major.x = element_blank(),
+    #axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+    axis.title.y = element_text(size = 10),
+    strip.background = element_rect(color = "black", fill = NA, linewidth  = 0.5),
+    strip.text = element_text(face = "bold", size = 6),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5) 
+  ) 
+ggsave("post_hoc_baci.jpg")
+
+###############################################################################
 
 #lets explore that poor convergence
 bad_rhat <- fit$BUGSoutput$summary[

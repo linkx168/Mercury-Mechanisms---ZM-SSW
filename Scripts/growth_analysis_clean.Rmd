@@ -164,11 +164,14 @@ mn_data_filtered <- mn_data_total %>%
                           alk == "year" ~ "y",
                           TRUE ~ "n")) %>% 
   filter(keep == "y") %>% 
+  #only really aged age-0 fish pre 2003, minimal data pre 2006
+  filter(year >2005) %>% 
   collect() %>% 
   as_tibble()
 glimpse(mn_data_filtered)
 #sweet, we now have fish wtih a lake-year alk OR all fish from a species in a survey were aged...
 #this certainly includes some lake-years with a really small number of fish (like maybe they got 1 walleye and aged it)
+
 
 #lets bring in the AIS data now
 zm_ssw <- read_csv(file.path("G:",
@@ -220,8 +223,16 @@ mn_data_filtered <- mn_data_filtered %>%
            year < zm ~ "before",
            birth_year >= zm ~ "after",
            TRUE ~ "overlap"
-         ))  
+         )) 
 glimpse(mn_data_filtered)
+
+#let's only take lake-year-species with at least 3 age classes (10/22/26 addition to see if model fitting issues are caused by lack of data)
+mn_data_filtered <- mn_data_filtered %>% 
+  group_by(lake_id, year, species_1) %>% 
+  mutate(n_age_classes = n_distinct(age_clean)) %>% 
+  ungroup() %>% 
+  filter(n_age_classes >= 3)
+
 
 mn_data_filtered %>% 
   group_by(zm_lake) %>% 
@@ -234,33 +245,6 @@ mn_data_filtered %>%
 
 glimpse(mn_data_filtered)
 ##########################################################
-
-  ref_map <- ref_eligible %>%
-    mutate(
-      matched_index = match(nearest_zm_id, zm_eligible$lake_id)
-    )
-
-  line_geometry <- st_nearest_points(
-    ref_map,
-    zm_eligible[ref_map$matched_index, ],
-    pairwise = TRUE
-  )
-
-  connections <- st_sf(
-    ref_map %>%
-      st_drop_geometry() %>%
-      select(lake_id, nearest_zm_id, pseudo_zm_year,
-             nearest_zm_distance_km),
-    geometry = line_geometry
-  )
-
-  list(
-    data = species_data,
-    invaded_lakes = zm_eligible,
-    reference_lakes = ref_eligible,
-    connections = connections
-  )
-
 
 
 create_midfish_species <- function(species, data) {
@@ -400,6 +384,20 @@ create_midfish_species <- function(species, data) {
       by = c("lake_id", "pseudo_zm_year")
     ) %>%
     filter(has_pre_pseudo, has_post_pseudo)
+  
+   # --------------------------------------------------
+  # 4b. Keep the 3 closest eligible reference lakes
+  #     assigned to each invaded lake
+  # --------------------------------------------------
+
+  eligible_ref <- eligible_ref %>%
+    group_by(nearest_zm_id) %>%
+    slice_min(
+      order_by = nearest_zm_distance_km,
+      n = 3,
+      with_ties = FALSE
+    ) %>%
+    ungroup()
 
   # --------------------------------------------------
   # 5. Combine eligible invaded and reference lakes
@@ -492,6 +490,22 @@ wae_data %>%
   summarise(mean = mean(n_fish),
             min = min(n_fish),
             max = max(n_fish))
+
+wae_data %>% 
+  group_by(lake_id, zm_lake, period) %>% 
+  summarise(n_fish = n()) %>% 
+  ungroup() %>% 
+  filter(n_fish == min(n_fish)) %>% 
+  left_join(wae_data, by = c("lake_id", "zm_lake", "period")) %>% 
+  ggplot() +
+  geom_point(aes(age_clean, length_1, color = as.factor(year))) +
+  facet_wrap(~lake_id)
+
+wae_data %>% 
+  filter(lake_id == 1020400) %>% 
+  group_by(species_1, year, zm_lake, period) %>% 
+  summarise(n_fish = n(),
+            n_ages = n_distinct(age_clean))
 
 ggplot() +
   geom_sf(
